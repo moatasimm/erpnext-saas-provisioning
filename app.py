@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-ERPNext SaaS Auto-Provisioning API v3
+ERPNext SaaS Auto-Provisioning API v4
 ======================================
-Fixed: VAT setup uses bench execute instead of bench console
+- bench execute (no hanging)
+- zatca_integration (correct name)
+- Optional demo data via install_demo parameter
+- Auto VAT setup after Setup Wizard
 """
 
 import os
@@ -67,7 +70,6 @@ def require_api_key(f):
 
 
 def get_bench_env():
-    """Get environment variables for running bench commands."""
     env = os.environ.copy()
     env["GIT_PYTHON_REFRESH"] = "quiet"
     env["HOME"] = f"/home/{CONFIG['BENCH_USER']}"
@@ -80,7 +82,6 @@ def get_bench_env():
 
 
 def run_bench_command(cmd, site=None, timeout=600):
-    """Run a bench command as frappe user."""
     bp = CONFIG["BENCH_PATH"]
     bb = CONFIG["BENCH_BIN"]
 
@@ -105,7 +106,6 @@ def run_bench_command(cmd, site=None, timeout=600):
         if result.returncode == 0:
             return True, result.stdout, result.stderr
 
-        # bench often returns non-zero but operation succeeded
         success_patterns = [
             r"Installing frappe",
             r"Updating DocTypes",
@@ -131,7 +131,6 @@ def run_bench_command(cmd, site=None, timeout=600):
 
 
 def run_shell(cmd, timeout=300):
-    """Run a shell command directly."""
     logger.info(f"Shell: {cmd}")
     try:
         result = subprocess.run(
@@ -144,21 +143,15 @@ def run_shell(cmd, timeout=300):
 
 
 def run_frappe_script(site_name, script_content):
-    """
-    Run a Python script inside Frappe context using bench execute.
-    Creates a temporary module in frappe/utils/, runs it, then cleans up.
-    This avoids the interactive bench console hanging issue.
-    """
+    """Run Python script via bench execute (non-interactive)."""
     bp = CONFIG["BENCH_PATH"]
     bb = CONFIG["BENCH_BIN"]
 
-    # Create a proper Python module in frappe/utils/
     scripts_dir = f"{bp}/apps/frappe/frappe/utils"
     script_id = uuid.uuid4().hex[:8]
     module_name = f"_provision_{script_id}"
     script_path = f"{scripts_dir}/{module_name}.py"
 
-    # Indent the script content to be inside a function
     indented = "\n".join(
         "    " + line if line.strip() else ""
         for line in script_content.strip().split("\n")
@@ -171,24 +164,21 @@ def run():
 """
 
     try:
-        # Write script file
         with open(script_path, "w") as f:
             f.write(wrapped_script)
 
-        # Make it owned by frappe
         subprocess.run(
             ["chown", f"{CONFIG['BENCH_USER']}:{CONFIG['BENCH_USER']}", script_path],
             capture_output=True
         )
 
-        # Run via bench execute (non-interactive, no hanging!)
         cmd = f"cd {bp} && {bb} --site {site_name} execute frappe.utils.{module_name}.run"
 
         result = subprocess.run(
             ["sudo", "-u", CONFIG["BENCH_USER"], "--", "bash", "-c", cmd],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=180,
             env=get_bench_env(),
         )
 
@@ -202,12 +192,10 @@ def run():
         logger.error(f"Script exception: {e}")
         return False, "", str(e)
     finally:
-        # Cleanup script file
         try:
             os.remove(script_path)
         except OSError:
             pass
-        # Cleanup .pyc cache
         try:
             import glob
             for f in glob.glob(f"{scripts_dir}/__pycache__/{module_name}*"):
@@ -217,7 +205,6 @@ def run():
 
 
 def update_job(job_id, **kwargs):
-    """Update job status in tracker."""
     if job_id in jobs:
         jobs[job_id].update(kwargs)
         jobs[job_id]["updated_at"] = datetime.utcnow().isoformat()
@@ -229,7 +216,6 @@ def update_job(job_id, **kwargs):
 
 
 def validate_subdomain(subdomain):
-    """Validate subdomain format."""
     if not subdomain:
         return False, "Subdomain is required"
     if not re.match(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$', subdomain.lower()):
@@ -241,7 +227,7 @@ def validate_subdomain(subdomain):
 
 
 # ===================================================================
-#  VAT SETUP SCRIPTS
+#  FRAPPE SCRIPTS (run inside Frappe context via bench execute)
 # ===================================================================
 
 SAUDI_DEFAULTS_SCRIPT = """
@@ -370,18 +356,66 @@ for co in companies:
 print("VAT setup complete!")
 """
 
+DEMO_DATA_SCRIPT = """
+# Step 1: Relax custom_country mandatory (ZATCA adds it)
+cf = frappe.db.get_value("Custom Field", {"fieldname": "custom_country", "dt": "Customer"}, "name")
+if cf:
+    frappe.db.set_value("Custom Field", cf, "reqd", 0)
+    frappe.db.commit()
+    frappe.clear_cache()
+    print("1. custom_country relaxed")
+
+# Step 2: Remove auto-created Demo Company (Demo) if exists
+# so demo setup can recreate it cleanly
+if frappe.db.exists("Company", "Demo Company (Demo)"):
+    try:
+        frappe.delete_doc("Company", "Demo Company (Demo)", force=True, ignore_permissions=True)
+        frappe.db.commit()
+        print("2. Removed existing Demo Company (Demo)")
+    except Exception as e:
+        print(f"2. Could not remove Demo Company (Demo): {e}")
+else:
+    print("2. No Demo Company (Demo) to remove")
+
+# Step 3: Install demo data
+try:
+    from erpnext.setup.demo import setup_demo_data
+    setup_demo_data()
+    print("3. Demo data installed!")
+except Exception as e:
+    print(f"3. Demo error: {e}")
+
+# Step 4: Fix customers without country
+cust = frappe.get_all("Customer", filters={"custom_country": ["in", ["", None]]}, pluck="name")
+for c in cust:
+    frappe.db.set_value("Customer", c, "custom_country", "Saudi Arabia")
+print(f"4. Fixed {len(cust)} customers")
+
+# Step 5: Restore mandatory
+if cf:
+    frappe.db.set_value("Custom Field", cf, "reqd", 1)
+    print("5. custom_country mandatory again")
+
+frappe.db.commit()
+
+print(f"Customers: {frappe.db.count('Customer')}")
+print(f"Items: {frappe.db.count('Item')}")
+print("Demo setup done!")
+"""
+
 
 # ===================================================================
 #  PROVISIONING PIPELINE
 # ===================================================================
 
-def provision_site(job_id, subdomain, admin_password, company_name=None):
+def provision_site(job_id, subdomain, admin_password, company_name=None, install_demo=False):
     """Full provisioning pipeline (runs in background thread)."""
     site_name = f"{subdomain}.{CONFIG['BASE_DOMAIN']}"
 
     try:
         site_dir = Path(CONFIG["BENCH_PATH"]) / "sites" / site_name
 
+        # -- Step 1: Create Site -----------------------------------
         if site_dir.exists():
             logger.info(f"{site_name} exists, skipping creation")
             update_job(job_id, step="creating_site", status="running",
@@ -400,6 +434,7 @@ def provision_site(job_id, subdomain, admin_password, company_name=None):
                            error=f"Failed: {err[:300]}")
                 return
 
+        # -- Step 2: Install Apps ----------------------------------
         for app_name in CONFIG["APPS_TO_INSTALL"]:
             update_job(job_id, step=f"installing_{app_name}", status="running",
                        message=f"Installing {app_name}...")
@@ -408,7 +443,7 @@ def provision_site(job_id, subdomain, admin_password, company_name=None):
             if not success:
                 if "already installed" in (out + err):
                     logger.info(f"{app_name} already installed")
-                elif app_name == "zatca":
+                elif app_name == "zatca_integration":
                     logger.warning(f"ZATCA warning: {err[:200]}")
                 else:
                     update_job(job_id, status="failed",
@@ -416,11 +451,13 @@ def provision_site(job_id, subdomain, admin_password, company_name=None):
                                error=f"Failed: {err[:300]}")
                     return
 
+        # -- Step 3: Setup Nginx -----------------------------------
         update_job(job_id, step="setup_nginx", status="running",
                    message="Configuring Nginx...")
         run_bench_command("setup nginx --yes", timeout=120)
         run_shell("sudo systemctl reload nginx")
 
+        # -- Step 4: SSL Certificate --------------------------------
         update_job(job_id, step="setup_ssl", status="running",
                    message="Obtaining SSL certificate...")
         run_shell(
@@ -429,19 +466,37 @@ def provision_site(job_id, subdomain, admin_password, company_name=None):
             f"--email {CONFIG['CERTBOT_EMAIL']} "
             f"--redirect", timeout=120)
 
+        # -- Step 5: Saudi Defaults (Phase 1) ----------------------
         update_job(job_id, step="post_setup", status="running",
                    message="Applying Saudi Arabia defaults...")
         run_frappe_script(site_name, SAUDI_DEFAULTS_SCRIPT)
 
+        # -- Step 6: Enable Scheduler ------------------------------
         update_job(job_id, step="enable_scheduler", status="running",
                    message="Enabling scheduler...")
         run_bench_command("enable-scheduler", site=site_name)
         run_bench_command("clear-cache", site=site_name)
 
-        update_job(job_id, step="completed", status="completed",
-                   message="Site provisioned successfully!",
-                   site_url=f"https://{site_name}",
-                   site_name=site_name)
+        # -- Done --------------------------------------------------
+        result_data = {
+            "step": "completed",
+            "status": "completed",
+            "message": "Site provisioned successfully!",
+            "site_url": f"https://{site_name}",
+            "site_name": site_name,
+            "install_demo": install_demo,
+            "next_steps": [
+                f"1. Open https://{site_name} and complete Setup Wizard",
+                f"2. Call POST /api/site/run-vat-setup with subdomain={subdomain}",
+            ],
+        }
+
+        if install_demo:
+            result_data["next_steps"].append(
+                f"3. Call POST /api/site/install-demo with subdomain={subdomain}"
+            )
+
+        update_job(job_id, **result_data)
         logger.info(f"Site {site_name} provisioned successfully!")
 
     except Exception as e:
@@ -458,7 +513,7 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "service": "ERPNext SaaS Provisioning API",
-        "version": "3.0",
+        "version": "4.0",
         "timestamp": datetime.utcnow().isoformat(),
         "base_domain": CONFIG["BASE_DOMAIN"],
     })
@@ -467,12 +522,25 @@ def health_check():
 @app.route("/api/provision", methods=["POST"])
 @require_api_key
 def provision():
+    """
+    Provision a new ERPNext tenant site.
+
+    Request JSON:
+    {
+        "subdomain": "client1",
+        "admin_password": "securepass123",
+        "company_name": "optional",
+        "install_demo": false
+    }
+    """
     data = request.get_json()
     if not data:
         return jsonify({"error": "JSON body required"}), 400
 
     subdomain = data.get("subdomain", "").strip().lower()
     admin_password = data.get("admin_password", CONFIG["ADMIN_PASSWORD"])
+    company_name = data.get("company_name")
+    install_demo = data.get("install_demo", False)
 
     valid, msg = validate_subdomain(subdomain)
     if not valid:
@@ -501,13 +569,14 @@ def provision():
         "status": "queued",
         "step": "queued",
         "message": "Provisioning queued...",
+        "install_demo": install_demo,
         "created_at": datetime.utcnow().isoformat(),
         "updated_at": datetime.utcnow().isoformat(),
     }
 
     thread = threading.Thread(
         target=provision_site,
-        args=(job_id, subdomain, admin_password, data.get("company_name")),
+        args=(job_id, subdomain, admin_password, company_name, install_demo),
         daemon=True,
     )
     thread.start()
@@ -516,6 +585,7 @@ def provision():
         "job_id": job_id,
         "site_name": site_name,
         "status": "queued",
+        "install_demo": install_demo,
         "status_url": f"/api/site/status?job_id={job_id}",
     }), 202
 
@@ -585,7 +655,7 @@ def delete_site():
 @app.route("/api/site/run-vat-setup", methods=["POST"])
 @require_api_key
 def api_run_vat_setup():
-    """Run Phase 2 VAT setup after Setup Wizard."""
+    """Run VAT setup after Setup Wizard completion."""
     data = request.get_json()
     if not data:
         return jsonify({"error": "JSON body required"}), 400
@@ -605,8 +675,87 @@ def api_run_vat_setup():
         return jsonify({"error": f"VAT failed: {err[:300]}", "output": out}), 500
 
 
+@app.route("/api/site/install-demo", methods=["POST"])
+@require_api_key
+def api_install_demo():
+    """
+    Install demo data for a site (after Setup Wizard).
+    Handles ZATCA custom_country field automatically.
+
+    Request JSON:
+    {
+        "subdomain": "client1"
+    }
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "JSON body required"}), 400
+
+    subdomain = data.get("subdomain", "").strip().lower()
+    site_name = f"{subdomain}.{CONFIG['BASE_DOMAIN']}"
+    site_path = Path(CONFIG["BENCH_PATH"]) / "sites" / site_name
+
+    if not site_path.exists():
+        return jsonify({"error": f"{site_name} not found"}), 404
+
+    success, out, err = run_frappe_script(site_name, DEMO_DATA_SCRIPT)
+
+    if success:
+        return jsonify({"message": f"Demo data installed for {site_name}", "output": out})
+    else:
+        return jsonify({"error": f"Demo install failed: {err[:300]}", "output": out}), 500
+
+
+@app.route("/api/site/setup-complete", methods=["POST"])
+@require_api_key
+def api_setup_complete():
+    """
+    One-click post-wizard setup: VAT + Demo (if requested).
+    Call this after client completes Setup Wizard.
+
+    Request JSON:
+    {
+        "subdomain": "client1",
+        "install_demo": true
+    }
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "JSON body required"}), 400
+
+    subdomain = data.get("subdomain", "").strip().lower()
+    install_demo = data.get("install_demo", False)
+    site_name = f"{subdomain}.{CONFIG['BASE_DOMAIN']}"
+    site_path = Path(CONFIG["BENCH_PATH"]) / "sites" / site_name
+
+    if not site_path.exists():
+        return jsonify({"error": f"{site_name} not found"}), 404
+
+    results = {}
+
+    # Step 1: VAT Setup
+    success, out, err = run_frappe_script(site_name, VAT_SETUP_SCRIPT)
+    results["vat_setup"] = {
+        "success": success,
+        "output": out[:500] if out else "",
+    }
+
+    # Step 2: Demo Data (if requested)
+    if install_demo:
+        success, out, err = run_frappe_script(site_name, DEMO_DATA_SCRIPT)
+        results["demo_data"] = {
+            "success": success,
+            "output": out[:500] if out else "",
+        }
+
+    return jsonify({
+        "message": f"Post-wizard setup done for {site_name}",
+        "results": results,
+    })
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     debug = os.getenv("FLASK_DEBUG", "false").lower() == "true"
-    logger.info(f"Starting API v3 on port {port}")
+    logger.info(f"Starting API v4 on port {port}")
     app.run(host="0.0.0.0", port=port, debug=debug)

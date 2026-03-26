@@ -33,7 +33,7 @@ CONFIG = {
     "ADMIN_PASSWORD": os.getenv("DEFAULT_ADMIN_PASSWORD", "admin"),
     "API_KEY": os.getenv("API_KEY", "change-me"),
     "CERTBOT_EMAIL": os.getenv("CERTBOT_EMAIL", "admin@opentech.sa"),
-    "APPS_TO_INSTALL": ["erpnext", "zatca"],
+    "APPS_TO_INSTALL": ["erpnext", "zatca_integration"],
     "LOG_DIR": os.getenv("LOG_DIR", "/home/frappe/frappe-bench/logs/provisioning"),
 }
 

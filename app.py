@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-ERPNext SaaS Auto-Provisioning API v4
+ERPNext SaaS Auto-Provisioning API v5
 ======================================
 - bench execute (no hanging)
 - zatca_integration (correct name)
-- Optional demo data via install_demo parameter
-- Auto VAT setup after Setup Wizard
+- Optional demo data with auto tax template fix
+- Auto VAT setup via setup_wizard_complete hook
 """
 
 import os
@@ -84,110 +84,73 @@ def get_bench_env():
 def run_bench_command(cmd, site=None, timeout=600):
     bp = CONFIG["BENCH_PATH"]
     bb = CONFIG["BENCH_BIN"]
-
     if site:
         full_cmd = f"cd {bp} && {bb} --site {site} {cmd}"
     else:
         full_cmd = f"cd {bp} && {bb} {cmd}"
-
     logger.info(f"Running: {full_cmd}")
-
     try:
         result = subprocess.run(
             ["sudo", "-u", CONFIG["BENCH_USER"], "--", "bash", "-c", full_cmd],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=get_bench_env(),
+            capture_output=True, text=True, timeout=timeout, env=get_bench_env(),
         )
-
         combined = result.stdout + "\n" + result.stderr
-
         if result.returncode == 0:
             return True, result.stdout, result.stderr
-
-        success_patterns = [
-            r"Installing frappe",
-            r"Updating DocTypes",
-            r"already installed",
-            r"has been setup",
-            r"Scheduler is disabled",
-            r"Updating Dashboard",
-        ]
-        for pattern in success_patterns:
+        for pattern in [r"Installing frappe", r"Updating DocTypes", r"already installed",
+                        r"has been setup", r"Scheduler is disabled", r"Updating Dashboard"]:
             if re.search(pattern, combined):
                 logger.info(f"Succeeded despite rc={result.returncode} (matched: {pattern})")
                 return True, result.stdout, result.stderr
-
         logger.error(f"Failed (rc={result.returncode}): {result.stderr[:500]}")
         return False, result.stdout, result.stderr
-
     except subprocess.TimeoutExpired:
-        logger.error(f"Timeout after {timeout}s")
         return False, "", "Command timed out"
     except Exception as e:
-        logger.error(f"Exception: {e}")
         return False, "", str(e)
 
 
 def run_shell(cmd, timeout=300):
     logger.info(f"Shell: {cmd}")
     try:
-        result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=timeout
-        )
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
         return result.returncode == 0, result.stdout, result.stderr
     except Exception as e:
-        logger.error(f"Shell exception: {e}")
         return False, "", str(e)
 
 
 def run_frappe_script(site_name, script_content):
-    """Run Python script via bench execute (non-interactive)."""
     bp = CONFIG["BENCH_PATH"]
     bb = CONFIG["BENCH_BIN"]
-
     scripts_dir = f"{bp}/apps/frappe/frappe/utils"
     script_id = uuid.uuid4().hex[:8]
     module_name = f"_provision_{script_id}"
     script_path = f"{scripts_dir}/{module_name}.py"
-
     indented = "\n".join(
         "    " + line if line.strip() else ""
         for line in script_content.strip().split("\n")
     )
-
     wrapped_script = f"""import frappe
 
 def run():
 {indented}
 """
-
     try:
         with open(script_path, "w") as f:
             f.write(wrapped_script)
-
         subprocess.run(
             ["chown", f"{CONFIG['BENCH_USER']}:{CONFIG['BENCH_USER']}", script_path],
-            capture_output=True
+            capture_output=True,
         )
-
         cmd = f"cd {bp} && {bb} --site {site_name} execute frappe.utils.{module_name}.run"
-
         result = subprocess.run(
             ["sudo", "-u", CONFIG["BENCH_USER"], "--", "bash", "-c", cmd],
-            capture_output=True,
-            text=True,
-            timeout=180,
-            env=get_bench_env(),
+            capture_output=True, text=True, timeout=300, env=get_bench_env(),
         )
-
         logger.info(f"Script stdout: {result.stdout[:500]}")
         if result.returncode != 0:
             logger.warning(f"Script stderr: {result.stderr[:500]}")
-
         return result.returncode == 0, result.stdout, result.stderr
-
     except Exception as e:
         logger.error(f"Script exception: {e}")
         return False, "", str(e)
@@ -208,18 +171,14 @@ def update_job(job_id, **kwargs):
     if job_id in jobs:
         jobs[job_id].update(kwargs)
         jobs[job_id]["updated_at"] = datetime.utcnow().isoformat()
-        logger.info(
-            f"Job {job_id}: "
-            f"step={kwargs.get('step', '?')} "
-            f"status={kwargs.get('status', '?')}"
-        )
+        logger.info(f"Job {job_id}: step={kwargs.get('step','?')} status={kwargs.get('status','?')}")
 
 
 def validate_subdomain(subdomain):
     if not subdomain:
         return False, "Subdomain is required"
     if not re.match(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$', subdomain.lower()):
-        return False, "Invalid subdomain. Use lowercase letters, numbers, hyphens."
+        return False, "Invalid subdomain."
     reserved = ["www", "mail", "ftp", "admin", "api", "ns1", "ns2"]
     if subdomain.lower() in reserved:
         return False, f"'{subdomain}' is reserved"
@@ -227,7 +186,7 @@ def validate_subdomain(subdomain):
 
 
 # ===================================================================
-#  FRAPPE SCRIPTS (run inside Frappe context via bench execute)
+#  FRAPPE SCRIPTS
 # ===================================================================
 
 SAUDI_DEFAULTS_SCRIPT = """
@@ -277,11 +236,18 @@ for co in companies:
     ab = co.abbr
     print(f"VAT setup for: {cn} ({ab})")
 
+    # Find parent account (handles both numbered and standard charts)
     pa = None
     for c in [f"Duties and Taxes - {ab}", f"Tax Assets - {ab}", f"Current Liabilities - {ab}"]:
         if frappe.db.exists("Account", c):
             pa = c
             break
+    if not pa:
+        for pattern in [f"%Duties and Taxes - {ab}", f"%Tax Assets - {ab}"]:
+            result = frappe.db.get_value("Account", {"name": ["like", pattern], "company": cn, "is_group": 1}, "name")
+            if result:
+                pa = result
+                break
     if not pa:
         pa = frappe.db.get_value("Account", {"company": cn, "is_group": 1, "root_type": "Liability"}, "name")
     if not pa:
@@ -307,7 +273,12 @@ for co in companies:
             except Exception as e:
                 print(f"  ! {an}: {e}")
         else:
-            print(f"  = {an} exists")
+            current_parent = frappe.db.get_value("Account", full_name, "parent_account")
+            if current_parent != pa:
+                frappe.db.set_value("Account", full_name, "parent_account", pa)
+                print(f"  ~ {an} moved to {pa}")
+            else:
+                print(f"  = {an} exists")
 
     tmpl_list = [
         ("Sales Taxes and Charges Template", f"Saudi VAT 15% - {ab}", f"VAT 15% - {ab}", 15.0, 1),
@@ -319,22 +290,11 @@ for co in companies:
     for dt, ti, hd, rt, df in tmpl_list:
         if not frappe.db.exists(dt, ti):
             try:
-                tx = {
-                    "charge_type": "On Net Total",
-                    "account_head": hd,
-                    "description": ti,
-                    "rate": rt,
-                }
+                tx = {"charge_type": "On Net Total", "account_head": hd, "description": ti, "rate": rt}
                 if "Purchase" in dt:
                     tx["category"] = "Total"
                     tx["add_deduct_tax"] = "Add"
-                frappe.get_doc({
-                    "doctype": dt,
-                    "title": ti,
-                    "company": cn,
-                    "is_default": df,
-                    "taxes": [tx],
-                }).insert(ignore_permissions=True)
+                frappe.get_doc({"doctype": dt, "title": ti, "company": cn, "is_default": df, "taxes": [tx]}).insert(ignore_permissions=True)
                 print(f"  + {ti}")
             except Exception as e:
                 print(f"  ! {ti}: {e}")
@@ -343,10 +303,10 @@ for co in companies:
 
     try:
         if frappe.db.exists("DocType", "ZATCA Setting"):
-            zatca = frappe.get_single("ZATCA Setting")
-            if not zatca.company:
-                zatca.company = cn
-                zatca.save(ignore_permissions=True)
+            z = frappe.get_single("ZATCA Setting")
+            if not z.company:
+                z.company = cn
+                z.save(ignore_permissions=True)
                 print(f"  + ZATCA -> {cn}")
     except Exception as e:
         print(f"  ! ZATCA: {e}")
@@ -357,6 +317,11 @@ print("VAT setup complete!")
 """
 
 DEMO_DATA_SCRIPT = """
+# ============================================================
+# Demo Data Installation Script
+# Handles: custom_country field, Demo Company tax templates
+# ============================================================
+
 # Step 1: Relax custom_country mandatory (ZATCA adds it)
 cf = frappe.db.get_value("Custom Field", {"fieldname": "custom_country", "dt": "Customer"}, "name")
 if cf:
@@ -364,32 +329,116 @@ if cf:
     frappe.db.commit()
     frappe.clear_cache()
     print("1. custom_country relaxed")
-
-# Step 2: Remove auto-created Demo Company (Demo) if exists
-# so demo setup can recreate it cleanly
-if frappe.db.exists("Company", "Demo Company (Demo)"):
-    try:
-        frappe.delete_doc("Company", "Demo Company (Demo)", force=True, ignore_permissions=True)
-        frappe.db.commit()
-        print("2. Removed existing Demo Company (Demo)")
-    except Exception as e:
-        print(f"2. Could not remove Demo Company (Demo): {e}")
 else:
-    print("2. No Demo Company (Demo) to remove")
+    print("1. No custom_country field")
 
-# Step 3: Install demo data
+# Step 2: Get the main company info before demo creates Demo Company
+main_company = frappe.get_all("Company", fields=["name", "abbr"], order_by="creation asc", limit=1)
+if not main_company:
+    print("2. No company found, cannot install demo")
+    return
+mc_name = main_company[0].name
+mc_abbr = main_company[0].abbr
+print(f"2. Main company: {mc_name} ({mc_abbr})")
+
+# Step 3: Remove existing Demo Company if exists (so demo can recreate)
+demo_name = f"{mc_name} (Demo)"
+if frappe.db.exists("Company", demo_name):
+    try:
+        # Delete tax templates first
+        demo_abbr = frappe.db.get_value("Company", demo_name, "abbr")
+        for dt in ["Sales Taxes and Charges Template", "Purchase Taxes and Charges Template"]:
+            for t in frappe.get_all(dt, filters={"company": demo_name}, pluck="name"):
+                frappe.delete_doc(dt, t, force=True, ignore_permissions=True)
+        # Delete accounts
+        for acc in frappe.get_all("Account", filters={"company": demo_name, "account_type": "Tax"}, pluck="name"):
+            frappe.delete_doc("Account", acc, force=True, ignore_permissions=True)
+        frappe.delete_doc("Company", demo_name, force=True, ignore_permissions=True)
+        frappe.db.commit()
+        print(f"3. Deleted existing {demo_name}")
+    except Exception as e:
+        print(f"3. Could not delete {demo_name}: {e}")
+else:
+    print(f"3. No existing {demo_name}")
+
+# Step 4: Run ERPNext demo data setup
+# This creates Demo Company + masters + transactions
 try:
-    from erpnext.setup.demo import setup_demo_data
-    setup_demo_data()
-    print("3. Demo data installed!")
-except Exception as e:
-    print(f"3. Demo error: {e}")
+    from erpnext.setup.demo import create_demo_company, process_masters, make_transactions
+    demo_company = create_demo_company()
+    print(f"4a. Demo company created: {demo_company}")
 
-# Step 4: Fix customers without country
-cust = frappe.get_all("Customer", filters={"custom_country": ["in", ["", None]]}, pluck="name")
-for c in cust:
-    frappe.db.set_value("Customer", c, "custom_country", "Saudi Arabia")
-print(f"4. Fixed {len(cust)} customers")
+    # Step 4b: Create VAT accounts and templates for Demo Company BEFORE transactions
+    demo_co = frappe.get_doc("Company", demo_company)
+    demo_ab = demo_co.abbr
+
+    # Find parent account in Demo Company
+    pa = None
+    for pattern in [f"%Duties and Taxes - {demo_ab}", f"%Tax Assets - {demo_ab}"]:
+        result = frappe.db.get_value("Account", {"name": ["like", pattern], "company": demo_company, "is_group": 1}, "name")
+        if result:
+            pa = result
+            break
+    if not pa:
+        pa = frappe.db.get_value("Account", {"company": demo_company, "is_group": 1, "root_type": "Liability"}, "name")
+
+    if pa:
+        print(f"4b. Demo parent account: {pa}")
+        for an, r in [("VAT 15%", 15.0), ("VAT Zero-Rated", 0.0), ("VAT Exempted", 0.0)]:
+            if not frappe.db.exists("Account", f"{an} - {demo_ab}"):
+                try:
+                    frappe.get_doc({
+                        "doctype": "Account",
+                        "account_name": an,
+                        "parent_account": pa,
+                        "company": demo_company,
+                        "account_type": "Tax",
+                        "tax_rate": r,
+                        "is_group": 0,
+                    }).insert(ignore_permissions=True)
+                except Exception:
+                    pass
+
+        for dt, ti, hd, rt, df in [
+            ("Sales Taxes and Charges Template", f"Saudi VAT 15% - {demo_ab}", f"VAT 15% - {demo_ab}", 15.0, 1),
+            ("Sales Taxes and Charges Template", f"Saudi VAT Zero - {demo_ab}", f"VAT Zero-Rated - {demo_ab}", 0.0, 0),
+            ("Sales Taxes and Charges Template", f"Saudi VAT Exempt - {demo_ab}", f"VAT Exempted - {demo_ab}", 0.0, 0),
+            ("Purchase Taxes and Charges Template", f"Saudi VAT 15% Purch - {demo_ab}", f"VAT 15% - {demo_ab}", 15.0, 1),
+        ]:
+            if not frappe.db.exists(dt, ti):
+                try:
+                    tx = {"charge_type": "On Net Total", "account_head": hd, "description": ti, "rate": rt}
+                    if "Purchase" in dt:
+                        tx["category"] = "Total"
+                        tx["add_deduct_tax"] = "Add"
+                    frappe.get_doc({"doctype": dt, "title": ti, "company": demo_company, "is_default": df, "taxes": [tx]}).insert(ignore_permissions=True)
+                except Exception:
+                    pass
+        frappe.db.commit()
+        print("4c. Demo company VAT setup done")
+    else:
+        print("4b. WARNING: No parent account found for demo company")
+
+    # Step 4d: Process masters (customers, items, etc.)
+    process_masters()
+    print("4d. Masters created")
+
+    # Step 4e: Fix customers without country
+    cust = frappe.get_all("Customer", filters={"custom_country": ["in", ["", None]]}, pluck="name")
+    for c in cust:
+        frappe.db.set_value("Customer", c, "custom_country", "Saudi Arabia")
+    frappe.db.commit()
+    print(f"4e. Fixed {len(cust)} customers country")
+
+    # Step 4f: Make transactions (orders, invoices, payments)
+    make_transactions(demo_company)
+    frappe.cache.delete_keys("bootinfo")
+    print("4f. Transactions created")
+
+except Exception as e:
+    print(f"4. Demo error: {e}")
+    import traceback
+    traceback.print_exc()
 
 # Step 5: Restore mandatory
 if cf:
@@ -398,8 +447,11 @@ if cf:
 
 frappe.db.commit()
 
+# Final stats
 print(f"Customers: {frappe.db.count('Customer')}")
 print(f"Items: {frappe.db.count('Item')}")
+print(f"Sales Orders: {frappe.db.count('Sales Order')}")
+print(f"Sales Invoices: {frappe.db.count('Sales Invoice')}")
 print("Demo setup done!")
 """
 
@@ -409,94 +461,51 @@ print("Demo setup done!")
 # ===================================================================
 
 def provision_site(job_id, subdomain, admin_password, company_name=None, install_demo=False):
-    """Full provisioning pipeline (runs in background thread)."""
     site_name = f"{subdomain}.{CONFIG['BASE_DOMAIN']}"
-
     try:
         site_dir = Path(CONFIG["BENCH_PATH"]) / "sites" / site_name
-
-        # -- Step 1: Create Site -----------------------------------
         if site_dir.exists():
             logger.info(f"{site_name} exists, skipping creation")
-            update_job(job_id, step="creating_site", status="running",
-                       message="Site exists, skipping creation...")
+            update_job(job_id, step="creating_site", status="running", message="Site exists, skipping...")
         else:
-            update_job(job_id, step="creating_site", status="running",
-                       message=f"Creating site {site_name}...")
+            update_job(job_id, step="creating_site", status="running", message=f"Creating {site_name}...")
             success, out, err = run_bench_command(
-                f"new-site {site_name} "
-                f"--mariadb-root-password {CONFIG['MARIADB_ROOT_PASSWORD']} "
-                f"--admin-password {admin_password} "
-                f"--no-mariadb-socket",
-                timeout=300)
+                f"new-site {site_name} --mariadb-root-password {CONFIG['MARIADB_ROOT_PASSWORD']} --admin-password {admin_password} --no-mariadb-socket", timeout=300)
             if not success and not site_dir.exists():
-                update_job(job_id, status="failed", step="creating_site",
-                           error=f"Failed: {err[:300]}")
+                update_job(job_id, status="failed", step="creating_site", error=f"Failed: {err[:300]}")
                 return
 
-        # -- Step 2: Install Apps ----------------------------------
         for app_name in CONFIG["APPS_TO_INSTALL"]:
-            update_job(job_id, step=f"installing_{app_name}", status="running",
-                       message=f"Installing {app_name}...")
-            success, out, err = run_bench_command(
-                f"install-app {app_name}", site=site_name, timeout=300)
+            update_job(job_id, step=f"installing_{app_name}", status="running", message=f"Installing {app_name}...")
+            success, out, err = run_bench_command(f"install-app {app_name}", site=site_name, timeout=300)
             if not success:
                 if "already installed" in (out + err):
                     logger.info(f"{app_name} already installed")
                 elif app_name == "zatca_integration":
                     logger.warning(f"ZATCA warning: {err[:200]}")
                 else:
-                    update_job(job_id, status="failed",
-                               step=f"installing_{app_name}",
-                               error=f"Failed: {err[:300]}")
+                    update_job(job_id, status="failed", step=f"installing_{app_name}", error=f"Failed: {err[:300]}")
                     return
 
-        # -- Step 3: Setup Nginx -----------------------------------
-        update_job(job_id, step="setup_nginx", status="running",
-                   message="Configuring Nginx...")
+        update_job(job_id, step="setup_nginx", status="running", message="Configuring Nginx...")
         run_bench_command("setup nginx --yes", timeout=120)
         run_shell("sudo systemctl reload nginx")
 
-        # -- Step 4: SSL Certificate --------------------------------
-        update_job(job_id, step="setup_ssl", status="running",
-                   message="Obtaining SSL certificate...")
+        update_job(job_id, step="setup_ssl", status="running", message="Obtaining SSL certificate...")
         run_shell(
-            f"sudo certbot --nginx -d {site_name} "
-            f"--non-interactive --agree-tos "
-            f"--email {CONFIG['CERTBOT_EMAIL']} "
-            f"--redirect", timeout=120)
+            f"sudo certbot --nginx -d {site_name} --non-interactive --agree-tos --email {CONFIG['CERTBOT_EMAIL']} --redirect", timeout=120)
 
-        # -- Step 5: Saudi Defaults (Phase 1) ----------------------
-        update_job(job_id, step="post_setup", status="running",
-                   message="Applying Saudi Arabia defaults...")
+        update_job(job_id, step="post_setup", status="running", message="Applying Saudi defaults...")
         run_frappe_script(site_name, SAUDI_DEFAULTS_SCRIPT)
 
-        # -- Step 6: Enable Scheduler ------------------------------
-        update_job(job_id, step="enable_scheduler", status="running",
-                   message="Enabling scheduler...")
+        update_job(job_id, step="enable_scheduler", status="running", message="Enabling scheduler...")
         run_bench_command("enable-scheduler", site=site_name)
         run_bench_command("clear-cache", site=site_name)
 
-        # -- Done --------------------------------------------------
-        result_data = {
-            "step": "completed",
-            "status": "completed",
-            "message": "Site provisioned successfully!",
-            "site_url": f"https://{site_name}",
-            "site_name": site_name,
-            "install_demo": install_demo,
-            "next_steps": [
-                f"1. Open https://{site_name} and complete Setup Wizard",
-                f"2. Call POST /api/site/run-vat-setup with subdomain={subdomain}",
-            ],
-        }
-
-        if install_demo:
-            result_data["next_steps"].append(
-                f"3. Call POST /api/site/install-demo with subdomain={subdomain}"
-            )
-
-        update_job(job_id, **result_data)
+        update_job(job_id, step="completed", status="completed",
+                   message="Site provisioned successfully!",
+                   site_url=f"https://{site_name}", site_name=site_name,
+                   install_demo=install_demo)
         logger.info(f"Site {site_name} provisioned successfully!")
 
     except Exception as e:
@@ -513,7 +522,7 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "service": "ERPNext SaaS Provisioning API",
-        "version": "4.0",
+        "version": "5.0",
         "timestamp": datetime.utcnow().isoformat(),
         "base_domain": CONFIG["BASE_DOMAIN"],
     })
@@ -522,71 +531,39 @@ def health_check():
 @app.route("/api/provision", methods=["POST"])
 @require_api_key
 def provision():
-    """
-    Provision a new ERPNext tenant site.
-
-    Request JSON:
-    {
-        "subdomain": "client1",
-        "admin_password": "securepass123",
-        "company_name": "optional",
-        "install_demo": false
-    }
-    """
     data = request.get_json()
     if not data:
         return jsonify({"error": "JSON body required"}), 400
-
     subdomain = data.get("subdomain", "").strip().lower()
     admin_password = data.get("admin_password", CONFIG["ADMIN_PASSWORD"])
-    company_name = data.get("company_name")
     install_demo = data.get("install_demo", False)
-
     valid, msg = validate_subdomain(subdomain)
     if not valid:
         return jsonify({"error": msg}), 400
-
     site_name = f"{subdomain}.{CONFIG['BASE_DOMAIN']}"
-
     for jid, jdata in jobs.items():
         if jdata.get("site_name") == site_name and jdata.get("status") == "running":
             return jsonify({"error": "Provisioning in progress", "job_id": jid}), 409
-
     site_path = Path(CONFIG["BENCH_PATH"]) / "sites" / site_name
     if site_path.exists():
-        if any(j.get("site_name") == site_name and j.get("status") == "completed"
-               for j in jobs.values()):
-            return jsonify({
-                "error": f"{site_name} already provisioned",
-                "site_url": f"https://{site_name}",
-            }), 409
-
+        if any(j.get("site_name") == site_name and j.get("status") == "completed" for j in jobs.values()):
+            return jsonify({"error": f"{site_name} already provisioned", "site_url": f"https://{site_name}"}), 409
     job_id = str(uuid.uuid4())
     jobs[job_id] = {
-        "job_id": job_id,
-        "site_name": site_name,
-        "subdomain": subdomain,
-        "status": "queued",
-        "step": "queued",
-        "message": "Provisioning queued...",
+        "job_id": job_id, "site_name": site_name, "subdomain": subdomain,
+        "status": "queued", "step": "queued", "message": "Queued...",
         "install_demo": install_demo,
-        "created_at": datetime.utcnow().isoformat(),
-        "updated_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.utcnow().isoformat(), "updated_at": datetime.utcnow().isoformat(),
     }
-
     thread = threading.Thread(
         target=provision_site,
-        args=(job_id, subdomain, admin_password, company_name, install_demo),
+        args=(job_id, subdomain, admin_password, data.get("company_name"), install_demo),
         daemon=True,
     )
     thread.start()
-
     return jsonify({
-        "job_id": job_id,
-        "site_name": site_name,
-        "status": "queued",
-        "install_demo": install_demo,
-        "status_url": f"/api/site/status?job_id={job_id}",
+        "job_id": job_id, "site_name": site_name, "status": "queued",
+        "install_demo": install_demo, "status_url": f"/api/site/status?job_id={job_id}",
     }), 202
 
 
@@ -627,135 +604,76 @@ def delete_site():
     data = request.get_json()
     if not data:
         return jsonify({"error": "JSON body required"}), 400
-
     subdomain = data.get("subdomain", "").strip().lower()
     if not subdomain:
         return jsonify({"error": "subdomain required"}), 400
-
     site_name = f"{subdomain}.{CONFIG['BASE_DOMAIN']}"
     site_path = Path(CONFIG["BENCH_PATH"]) / "sites" / site_name
-
     if not site_path.exists():
         return jsonify({"error": f"{site_name} not found"}), 404
-
     success, out, err = run_bench_command(
-        f"drop-site {site_name} "
-        f"--mariadb-root-password {CONFIG['MARIADB_ROOT_PASSWORD']} "
-        f"--force", timeout=120)
-
+        f"drop-site {site_name} --mariadb-root-password {CONFIG['MARIADB_ROOT_PASSWORD']} --force", timeout=120)
     if not success and site_path.exists():
         return jsonify({"error": f"Delete failed: {err[:300]}"}), 500
-
     run_bench_command("setup nginx --yes")
     run_shell("sudo systemctl reload nginx")
-
     return jsonify({"message": f"{site_name} deleted", "site_name": site_name})
 
 
 @app.route("/api/site/run-vat-setup", methods=["POST"])
 @require_api_key
 def api_run_vat_setup():
-    """Run VAT setup after Setup Wizard completion."""
     data = request.get_json()
     if not data:
         return jsonify({"error": "JSON body required"}), 400
-
     subdomain = data.get("subdomain", "").strip().lower()
     site_name = f"{subdomain}.{CONFIG['BASE_DOMAIN']}"
-    site_path = Path(CONFIG["BENCH_PATH"]) / "sites" / site_name
-
-    if not site_path.exists():
+    if not (Path(CONFIG["BENCH_PATH"]) / "sites" / site_name).exists():
         return jsonify({"error": f"{site_name} not found"}), 404
-
     success, out, err = run_frappe_script(site_name, VAT_SETUP_SCRIPT)
-
     if success:
         return jsonify({"message": f"VAT setup done for {site_name}", "output": out})
-    else:
-        return jsonify({"error": f"VAT failed: {err[:300]}", "output": out}), 500
+    return jsonify({"error": f"VAT failed: {err[:300]}", "output": out}), 500
 
 
 @app.route("/api/site/install-demo", methods=["POST"])
 @require_api_key
 def api_install_demo():
-    """
-    Install demo data for a site (after Setup Wizard).
-    Handles ZATCA custom_country field automatically.
-
-    Request JSON:
-    {
-        "subdomain": "client1"
-    }
-    """
     data = request.get_json()
     if not data:
         return jsonify({"error": "JSON body required"}), 400
-
     subdomain = data.get("subdomain", "").strip().lower()
     site_name = f"{subdomain}.{CONFIG['BASE_DOMAIN']}"
-    site_path = Path(CONFIG["BENCH_PATH"]) / "sites" / site_name
-
-    if not site_path.exists():
+    if not (Path(CONFIG["BENCH_PATH"]) / "sites" / site_name).exists():
         return jsonify({"error": f"{site_name} not found"}), 404
-
     success, out, err = run_frappe_script(site_name, DEMO_DATA_SCRIPT)
-
     if success:
         return jsonify({"message": f"Demo data installed for {site_name}", "output": out})
-    else:
-        return jsonify({"error": f"Demo install failed: {err[:300]}", "output": out}), 500
+    return jsonify({"error": f"Demo failed: {err[:300]}", "output": out}), 500
 
 
 @app.route("/api/site/setup-complete", methods=["POST"])
 @require_api_key
 def api_setup_complete():
-    """
-    One-click post-wizard setup: VAT + Demo (if requested).
-    Call this after client completes Setup Wizard.
-
-    Request JSON:
-    {
-        "subdomain": "client1",
-        "install_demo": true
-    }
-    """
     data = request.get_json()
     if not data:
         return jsonify({"error": "JSON body required"}), 400
-
     subdomain = data.get("subdomain", "").strip().lower()
     install_demo = data.get("install_demo", False)
     site_name = f"{subdomain}.{CONFIG['BASE_DOMAIN']}"
-    site_path = Path(CONFIG["BENCH_PATH"]) / "sites" / site_name
-
-    if not site_path.exists():
+    if not (Path(CONFIG["BENCH_PATH"]) / "sites" / site_name).exists():
         return jsonify({"error": f"{site_name} not found"}), 404
-
     results = {}
-
-    # Step 1: VAT Setup
     success, out, err = run_frappe_script(site_name, VAT_SETUP_SCRIPT)
-    results["vat_setup"] = {
-        "success": success,
-        "output": out[:500] if out else "",
-    }
-
-    # Step 2: Demo Data (if requested)
+    results["vat_setup"] = {"success": success, "output": out[:500] if out else ""}
     if install_demo:
         success, out, err = run_frappe_script(site_name, DEMO_DATA_SCRIPT)
-        results["demo_data"] = {
-            "success": success,
-            "output": out[:500] if out else "",
-        }
-
-    return jsonify({
-        "message": f"Post-wizard setup done for {site_name}",
-        "results": results,
-    })
+        results["demo_data"] = {"success": success, "output": out[:500] if out else ""}
+    return jsonify({"message": f"Post-wizard setup done for {site_name}", "results": results})
 
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     debug = os.getenv("FLASK_DEBUG", "false").lower() == "true"
-    logger.info(f"Starting API v4 on port {port}")
+    logger.info(f"Starting API v5 on port {port}")
     app.run(host="0.0.0.0", port=port, debug=debug)

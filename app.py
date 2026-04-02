@@ -318,8 +318,8 @@ print("VAT setup complete!")
 
 DEMO_DATA_SCRIPT = """
 # ============================================================
-# Demo Data Installation Script
-# Handles: custom_country field, Demo Company tax templates
+# Demo Data Installation Script v2
+# Creates Demo Company manually to avoid bank account bug
 # ============================================================
 
 # Step 1: Relax custom_country mandatory (ZATCA adds it)
@@ -332,27 +332,22 @@ if cf:
 else:
     print("1. No custom_country field")
 
-# Step 2: Get the main company info before demo creates Demo Company
-main_company = frappe.get_all("Company", fields=["name", "abbr"], order_by="creation asc", limit=1)
+# Step 2: Get the main company info
+main_company = frappe.get_all("Company", fields=["name", "abbr", "default_currency", "country", "chart_of_accounts"], order_by="creation asc", limit=1)
 if not main_company:
     print("2. No company found, cannot install demo")
     return
-mc_name = main_company[0].name
-mc_abbr = main_company[0].abbr
-print(f"2. Main company: {mc_name} ({mc_abbr})")
+mc = main_company[0]
+print(f"2. Main company: {mc.name} ({mc.abbr})")
 
-# Step 3: Remove existing Demo Company if exists (so demo can recreate)
-demo_name = f"{mc_name} (Demo)"
+# Step 3: Remove existing Demo Company if exists
+demo_name = f"{mc.name} (Demo)"
+demo_abbr = f"{mc.abbr}D"
 if frappe.db.exists("Company", demo_name):
     try:
-        # Delete tax templates first
-        demo_abbr = frappe.db.get_value("Company", demo_name, "abbr")
         for dt in ["Sales Taxes and Charges Template", "Purchase Taxes and Charges Template"]:
             for t in frappe.get_all(dt, filters={"company": demo_name}, pluck="name"):
                 frappe.delete_doc(dt, t, force=True, ignore_permissions=True)
-        # Delete accounts
-        for acc in frappe.get_all("Account", filters={"company": demo_name, "account_type": "Tax"}, pluck="name"):
-            frappe.delete_doc("Account", acc, force=True, ignore_permissions=True)
         frappe.delete_doc("Company", demo_name, force=True, ignore_permissions=True)
         frappe.db.commit()
         print(f"3. Deleted existing {demo_name}")
@@ -361,84 +356,97 @@ if frappe.db.exists("Company", demo_name):
 else:
     print(f"3. No existing {demo_name}")
 
-# Step 4: Run ERPNext demo data setup
-# This creates Demo Company + masters + transactions
+# Step 4: Create Demo Company manually (avoids bank account crash)
 try:
-    from erpnext.setup.demo import create_demo_company, process_masters, make_transactions
-    demo_company = create_demo_company()
-    print(f"4a. Demo company created: {demo_company}")
+    new_company = frappe.new_doc("Company")
+    new_company.company_name = demo_name
+    new_company.abbr = demo_abbr
+    new_company.enable_perpetual_inventory = 1
+    new_company.default_currency = mc.default_currency
+    new_company.country = mc.country
+    new_company.chart_of_accounts_based_on = "Standard Template"
+    new_company.chart_of_accounts = mc.chart_of_accounts
+    new_company.insert(ignore_permissions=True)
 
-    # Step 4b: Create VAT accounts and templates for Demo Company BEFORE transactions
-    demo_co = frappe.get_doc("Company", demo_company)
-    demo_ab = demo_co.abbr
+    frappe.db.set_single_value("Global Defaults", "demo_company", new_company.name)
+    frappe.db.set_default("company", new_company.name)
 
-    # Find parent account in Demo Company
-    pa = None
-    for pattern in [f"%Duties and Taxes - {demo_ab}", f"%Tax Assets - {demo_ab}"]:
-        result = frappe.db.get_value("Account", {"name": ["like", pattern], "company": demo_company, "is_group": 1}, "name")
-        if result:
-            pa = result
-            break
-    if not pa:
-        pa = frappe.db.get_value("Account", {"company": demo_company, "is_group": 1, "root_type": "Liability"}, "name")
+    try:
+        from erpnext.setup.setup_wizard.operations.install_fixtures import create_bank_account
+        bank = create_bank_account({"company_name": new_company.name}, demo=True)
+        if bank:
+            frappe.db.set_value("Company", new_company.name, "default_bank_account", bank.name)
+    except Exception:
+        pass
 
-    if pa:
-        print(f"4b. Demo parent account: {pa}")
-        for an, r in [("VAT 15%", 15.0), ("VAT Zero-Rated", 0.0), ("VAT Exempted", 0.0)]:
-            if not frappe.db.exists("Account", f"{an} - {demo_ab}"):
-                try:
-                    frappe.get_doc({
-                        "doctype": "Account",
-                        "account_name": an,
-                        "parent_account": pa,
-                        "company": demo_company,
-                        "account_type": "Tax",
-                        "tax_rate": r,
-                        "is_group": 0,
-                    }).insert(ignore_permissions=True)
-                except Exception:
-                    pass
+    frappe.db.commit()
+    demo_company = new_company.name
+    print(f"4a. Created: {demo_company} ({demo_abbr})")
+except Exception as e:
+    print(f"4a. Error creating demo company: {e}")
+    return
 
-        for dt, ti, hd, rt, df in [
-            ("Sales Taxes and Charges Template", f"Saudi VAT 15% - {demo_ab}", f"VAT 15% - {demo_ab}", 15.0, 1),
-            ("Sales Taxes and Charges Template", f"Saudi VAT Zero - {demo_ab}", f"VAT Zero-Rated - {demo_ab}", 0.0, 0),
-            ("Sales Taxes and Charges Template", f"Saudi VAT Exempt - {demo_ab}", f"VAT Exempted - {demo_ab}", 0.0, 0),
-            ("Purchase Taxes and Charges Template", f"Saudi VAT 15% Purch - {demo_ab}", f"VAT 15% - {demo_ab}", 15.0, 1),
-        ]:
-            if not frappe.db.exists(dt, ti):
-                try:
-                    tx = {"charge_type": "On Net Total", "account_head": hd, "description": ti, "rate": rt}
-                    if "Purchase" in dt:
-                        tx["category"] = "Total"
-                        tx["add_deduct_tax"] = "Add"
-                    frappe.get_doc({"doctype": dt, "title": ti, "company": demo_company, "is_default": df, "taxes": [tx]}).insert(ignore_permissions=True)
-                except Exception:
-                    pass
-        frappe.db.commit()
-        print("4c. Demo company VAT setup done")
-    else:
-        print("4b. WARNING: No parent account found for demo company")
+# Step 4b: Create VAT for Demo Company
+pa = None
+for pattern in [f"%Duties and Taxes - {demo_abbr}", f"%Tax Assets - {demo_abbr}"]:
+    result = frappe.db.get_value("Account", {"name": ["like", pattern], "company": demo_company, "is_group": 1}, "name")
+    if result:
+        pa = result
+        break
+if not pa:
+    pa = frappe.db.get_value("Account", {"company": demo_company, "is_group": 1, "root_type": "Liability"}, "name")
 
-    # Step 4d: Process masters (customers, items, etc.)
+if pa:
+    print(f"4b. Demo tax parent: {pa}")
+    for an, r in [("VAT 15%", 15.0), ("VAT Zero-Rated", 0.0), ("VAT Exempted", 0.0)]:
+        if not frappe.db.exists("Account", f"{an} - {demo_abbr}"):
+            try:
+                frappe.get_doc({"doctype": "Account", "account_name": an, "parent_account": pa, "company": demo_company, "account_type": "Tax", "tax_rate": r, "is_group": 0}).insert(ignore_permissions=True)
+            except Exception:
+                pass
+    for dt, ti, hd, rt, df in [
+        ("Sales Taxes and Charges Template", f"Saudi VAT 15% - {demo_abbr}", f"VAT 15% - {demo_abbr}", 15.0, 1),
+        ("Sales Taxes and Charges Template", f"Saudi VAT Zero - {demo_abbr}", f"VAT Zero-Rated - {demo_abbr}", 0.0, 0),
+        ("Sales Taxes and Charges Template", f"Saudi VAT Exempt - {demo_abbr}", f"VAT Exempted - {demo_abbr}", 0.0, 0),
+        ("Purchase Taxes and Charges Template", f"Saudi VAT 15% Purch - {demo_abbr}", f"VAT 15% - {demo_abbr}", 15.0, 1),
+    ]:
+        if not frappe.db.exists(dt, ti):
+            try:
+                tx = {"charge_type": "On Net Total", "account_head": hd, "description": ti, "rate": rt}
+                if "Purchase" in dt:
+                    tx["category"] = "Total"
+                    tx["add_deduct_tax"] = "Add"
+                frappe.get_doc({"doctype": dt, "title": ti, "company": demo_company, "is_default": df, "taxes": [tx]}).insert(ignore_permissions=True)
+            except Exception:
+                pass
+    frappe.db.commit()
+    print("4c. Demo VAT done")
+else:
+    print("4b. No parent account for demo")
+
+# Step 4d: Process masters
+try:
+    from erpnext.setup.demo import process_masters
     process_masters()
     print("4d. Masters created")
+except Exception as e:
+    print(f"4d. Masters error: {e}")
 
-    # Step 4e: Fix customers without country
-    cust = frappe.get_all("Customer", filters={"custom_country": ["in", ["", None]]}, pluck="name")
-    for c in cust:
-        frappe.db.set_value("Customer", c, "custom_country", "Saudi Arabia")
-    frappe.db.commit()
-    print(f"4e. Fixed {len(cust)} customers country")
+# Step 4e: Fix customers country
+cust = frappe.get_all("Customer", filters={"custom_country": ["in", ["", None]]}, pluck="name")
+for c in cust:
+    frappe.db.set_value("Customer", c, "custom_country", "Saudi Arabia")
+frappe.db.commit()
+print(f"4e. Fixed {len(cust)} customers")
 
-    # Step 4f: Make transactions (orders, invoices, payments)
+# Step 4f: Transactions
+try:
+    from erpnext.setup.demo import make_transactions
     make_transactions(demo_company)
     frappe.cache.delete_keys("bootinfo")
-    print("4f. Transactions created")
-
+    print("4f. Transactions done")
 except Exception as e:
-    print(f"4. Demo error: {e}")
-    import traceback
-    traceback.print_exc()
+    print(f"4f. Transactions error: {e}")
 
 # Step 5: Restore mandatory
 if cf:
@@ -446,15 +454,12 @@ if cf:
     print("5. custom_country mandatory again")
 
 frappe.db.commit()
-
-# Final stats
 print(f"Customers: {frappe.db.count('Customer')}")
 print(f"Items: {frappe.db.count('Item')}")
 print(f"Sales Orders: {frappe.db.count('Sales Order')}")
 print(f"Sales Invoices: {frappe.db.count('Sales Invoice')}")
 print("Demo setup done!")
 """
-
 
 # ===================================================================
 #  PROVISIONING PIPELINE

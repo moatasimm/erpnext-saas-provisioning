@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 """
-ERPNext SaaS Auto-Provisioning API v5
-======================================
-- bench execute (no hanging)
-- zatca_integration (correct name)
-- Optional demo data with auto tax template fix
-- Auto VAT setup via setup_wizard_complete hook
+ERPNext SaaS Auto-Provisioning API v5.1
 """
 
 import os
@@ -55,10 +50,6 @@ logger = logging.getLogger("provisioning")
 jobs = {}
 
 
-# ===================================================================
-#  UTILITIES
-# ===================================================================
-
 def require_api_key(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -100,7 +91,7 @@ def run_bench_command(cmd, site=None, timeout=600):
         for pattern in [r"Installing frappe", r"Updating DocTypes", r"already installed",
                         r"has been setup", r"Scheduler is disabled", r"Updating Dashboard"]:
             if re.search(pattern, combined):
-                logger.info(f"Succeeded despite rc={result.returncode} (matched: {pattern})")
+                logger.info(f"Succeeded despite rc={result.returncode}")
                 return True, result.stdout, result.stderr
         logger.error(f"Failed (rc={result.returncode}): {result.stderr[:500]}")
         return False, result.stdout, result.stderr
@@ -236,7 +227,6 @@ for co in companies:
     ab = co.abbr
     print(f"VAT setup for: {cn} ({ab})")
 
-    # Find parent account (handles both numbered and standard charts)
     pa = None
     for c in [f"Duties and Taxes - {ab}", f"Tax Assets - {ab}", f"Current Liabilities - {ab}"]:
         if frappe.db.exists("Account", c):
@@ -317,12 +307,7 @@ print("VAT setup complete!")
 """
 
 DEMO_DATA_SCRIPT = """
-# ============================================================
-# Demo Data Installation Script v2
-# Creates Demo Company manually to avoid bank account bug
-# ============================================================
-
-# Step 1: Relax custom_country mandatory (ZATCA adds it)
+# Step 1: Relax custom_country mandatory
 cf = frappe.db.get_value("Custom Field", {"fieldname": "custom_country", "dt": "Customer"}, "name")
 if cf:
     frappe.db.set_value("Custom Field", cf, "reqd", 0)
@@ -332,15 +317,15 @@ if cf:
 else:
     print("1. No custom_country field")
 
-# Step 2: Get the main company info
+# Step 2: Get main company info
 main_company = frappe.get_all("Company", fields=["name", "abbr", "default_currency", "country", "chart_of_accounts"], order_by="creation asc", limit=1)
 if not main_company:
-    print("2. No company found, cannot install demo")
+    print("2. No company found")
     return
 mc = main_company[0]
 print(f"2. Main company: {mc.name} ({mc.abbr})")
 
-# Step 3: Remove existing Demo Company if exists
+# Step 3: Remove existing Demo Company
 demo_name = f"{mc.name} (Demo)"
 demo_abbr = f"{mc.abbr}D"
 if frappe.db.exists("Company", demo_name):
@@ -356,7 +341,7 @@ if frappe.db.exists("Company", demo_name):
 else:
     print(f"3. No existing {demo_name}")
 
-# Step 4: Create Demo Company manually (avoids bank account crash)
+# Step 4a: Create Demo Company manually
 try:
     new_company = frappe.new_doc("Company")
     new_company.company_name = demo_name
@@ -367,10 +352,8 @@ try:
     new_company.chart_of_accounts_based_on = "Standard Template"
     new_company.chart_of_accounts = mc.chart_of_accounts
     new_company.insert(ignore_permissions=True)
-
     frappe.db.set_single_value("Global Defaults", "demo_company", new_company.name)
     frappe.db.set_default("company", new_company.name)
-
     try:
         from erpnext.setup.setup_wizard.operations.install_fixtures import create_bank_account
         bank = create_bank_account({"company_name": new_company.name}, demo=True)
@@ -378,12 +361,11 @@ try:
             frappe.db.set_value("Company", new_company.name, "default_bank_account", bank.name)
     except Exception:
         pass
-
     frappe.db.commit()
     demo_company = new_company.name
     print(f"4a. Created: {demo_company} ({demo_abbr})")
 except Exception as e:
-    print(f"4a. Error creating demo company: {e}")
+    print(f"4a. Error: {e}")
     return
 
 # Step 4b: Create VAT for Demo Company
@@ -419,20 +401,18 @@ if pa:
                 frappe.get_doc({"doctype": dt, "title": ti, "company": demo_company, "is_default": df, "taxes": [tx]}).insert(ignore_permissions=True)
             except Exception:
                 pass
-      frappe.db.commit()
+    frappe.db.commit()
     print("4c. Demo VAT done")
-
-# Step 4c2: Set Round Off Cost Center for Demo Company
-try:
-    cc = frappe.db.get_value("Cost Center", {"company": demo_company, "is_group": 0}, "name")
-    if cc:
-        frappe.db.set_value("Company", demo_company, "round_off_cost_center", cc)
-        frappe.db.set_value("Company", demo_company, "depreciation_cost_center", cc)
-        frappe.db.commit()
-        print(f"4c2. Cost center set: {cc}")
-except Exception as e:
-    print(f"4c2. Cost center error: {e}")
-
+    # Step 4c2: Set Round Off Cost Center
+    try:
+        cc = frappe.db.get_value("Cost Center", {"company": demo_company, "is_group": 0}, "name")
+        if cc:
+            frappe.db.set_value("Company", demo_company, "round_off_cost_center", cc)
+            frappe.db.set_value("Company", demo_company, "depreciation_cost_center", cc)
+            frappe.db.commit()
+            print(f"4c2. Cost center set: {cc}")
+    except Exception as e:
+        print(f"4c2. Cost center error: {e}")
 else:
     print("4b. No parent account for demo")
 
@@ -473,6 +453,7 @@ print(f"Sales Invoices: {frappe.db.count('Sales Invoice')}")
 print("Demo setup done!")
 """
 
+
 # ===================================================================
 #  PROVISIONING PIPELINE
 # ===================================================================
@@ -509,8 +490,7 @@ def provision_site(job_id, subdomain, admin_password, company_name=None, install
         run_shell("sudo systemctl reload nginx")
 
         update_job(job_id, step="setup_ssl", status="running", message="Obtaining SSL certificate...")
-        run_shell(
-            f"sudo certbot --nginx -d {site_name} --non-interactive --agree-tos --email {CONFIG['CERTBOT_EMAIL']} --redirect", timeout=120)
+        run_shell(f"sudo certbot --nginx -d {site_name} --non-interactive --agree-tos --email {CONFIG['CERTBOT_EMAIL']} --redirect", timeout=120)
 
         update_job(job_id, step="post_setup", status="running", message="Applying Saudi defaults...")
         run_frappe_script(site_name, SAUDI_DEFAULTS_SCRIPT)
@@ -521,8 +501,7 @@ def provision_site(job_id, subdomain, admin_password, company_name=None, install
 
         update_job(job_id, step="completed", status="completed",
                    message="Site provisioned successfully!",
-                   site_url=f"https://{site_name}", site_name=site_name,
-                   install_demo=install_demo)
+                   site_url=f"https://{site_name}", site_name=site_name, install_demo=install_demo)
         logger.info(f"Site {site_name} provisioned successfully!")
 
     except Exception as e:
@@ -539,7 +518,7 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "service": "ERPNext SaaS Provisioning API",
-        "version": "5.0",
+        "version": "5.1",
         "timestamp": datetime.utcnow().isoformat(),
         "base_domain": CONFIG["BASE_DOMAIN"],
     })
@@ -692,5 +671,5 @@ def api_setup_complete():
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))
     debug = os.getenv("FLASK_DEBUG", "false").lower() == "true"
-    logger.info(f"Starting API v5 on port {port}")
+    logger.info(f"Starting API v5.1 on port {port}")
     app.run(host="0.0.0.0", port=port, debug=debug)

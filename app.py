@@ -419,8 +419,20 @@ if pa:
                 frappe.get_doc({"doctype": dt, "title": ti, "company": demo_company, "is_default": df, "taxes": [tx]}).insert(ignore_permissions=True)
             except Exception:
                 pass
-    frappe.db.commit()
+      frappe.db.commit()
     print("4c. Demo VAT done")
+
+# Step 4c2: Set Round Off Cost Center for Demo Company
+try:
+    cc = frappe.db.get_value("Cost Center", {"company": demo_company, "is_group": 0}, "name")
+    if cc:
+        frappe.db.set_value("Company", demo_company, "round_off_cost_center", cc)
+        frappe.db.set_value("Company", demo_company, "depreciation_cost_center", cc)
+        frappe.db.commit()
+        print(f"4c2. Cost center set: {cc}")
+except Exception as e:
+    print(f"4c2. Cost center error: {e}")
+
 else:
     print("4b. No parent account for demo")
 

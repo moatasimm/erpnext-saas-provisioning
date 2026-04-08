@@ -498,6 +498,10 @@ def provision_site(job_id, subdomain, admin_password, company_name=None, install
         update_job(job_id, step="enable_scheduler", status="running", message="Enabling scheduler...")
         run_bench_command("enable-scheduler", site=site_name)
         run_bench_command("clear-cache", site=site_name)
+        run_bench_command("clear-website-cache", site=site_name)
+
+        update_job(job_id, step="build_assets", status="running", message="Building assets...")
+        run_bench_command("build --app frappe --app erpnext", timeout=300)
 
         update_job(job_id, step="completed", status="completed",
                    message="Site provisioned successfully!",

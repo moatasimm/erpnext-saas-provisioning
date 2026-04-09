@@ -81,14 +81,16 @@ def create_vat_for_company(company_name, abbr):
             if current != pa:
                 frappe.db.set_value("Account", full_name, "parent_account", pa)
 
+    # Tax templates with ZATCA custom_tax_type for proper XML category code
+    # Standard Rate -> S, Zero Rate -> Z, Except Rate -> E, Out of scope -> O
     templates = [
-        ("Sales Taxes and Charges Template", f"Saudi VAT 15% - {abbr}", f"VAT 15% - {abbr}", 15.0, 1),
-        ("Sales Taxes and Charges Template", f"Saudi VAT Zero - {abbr}", f"VAT Zero-Rated - {abbr}", 0.0, 0),
-        ("Sales Taxes and Charges Template", f"Saudi VAT Exempt - {abbr}", f"VAT Exempted - {abbr}", 0.0, 0),
-        ("Purchase Taxes and Charges Template", f"Saudi VAT 15% Purch - {abbr}", f"VAT 15% - {abbr}", 15.0, 1),
+        ("Sales Taxes and Charges Template", f"Saudi VAT 15% - {abbr}", f"VAT 15% - {abbr}", 15.0, 1, "Standard Rate"),
+        ("Sales Taxes and Charges Template", f"Saudi VAT Zero - {abbr}", f"VAT Zero-Rated - {abbr}", 0.0, 0, "Zero Rate"),
+        ("Sales Taxes and Charges Template", f"Saudi VAT Exempt - {abbr}", f"VAT Exempted - {abbr}", 0.0, 0, "Except Rate"),
+        ("Purchase Taxes and Charges Template", f"Saudi VAT 15% Purch - {abbr}", f"VAT 15% - {abbr}", 15.0, 1, "Standard Rate"),
     ]
 
-    for dt, title, head, rate, default in templates:
+    for dt, title, head, rate, default, tax_type in templates:
         if not frappe.db.exists(dt, title):
             try:
                 tx = {
@@ -100,15 +102,22 @@ def create_vat_for_company(company_name, abbr):
                 if "Purchase" in dt:
                     tx["category"] = "Total"
                     tx["add_deduct_tax"] = "Add"
-                frappe.get_doc({
+                doc = frappe.get_doc({
                     "doctype": dt,
                     "title": title,
                     "company": company_name,
                     "is_default": default,
+                    "custom_tax_type": tax_type,
                     "taxes": [tx],
-                }).insert(ignore_permissions=True)
+                })
+                doc.insert(ignore_permissions=True)
             except Exception:
                 pass
+        else:
+            # Ensure custom_tax_type is set on existing templates
+            current = frappe.db.get_value(dt, title, "custom_tax_type")
+            if not current:
+                frappe.db.set_value(dt, title, "custom_tax_type", tax_type)
 
     cc = frappe.db.get_value("Cost Center", {"company": company_name, "is_group": 0}, "name")
     if cc:

@@ -500,6 +500,9 @@ def provision_site(job_id, subdomain, admin_password, company_name=None, install
         run_bench_command("clear-cache", site=site_name)
         run_bench_command("clear-website-cache", site=site_name)
 
+        update_job(job_id, step="install_zatca_print_format", status="running", message="Installing ZATCA print format...")
+        run_bench_command("execute frappe.utils._zatca_pf_setup.run", site=site_name)
+
         update_job(job_id, step="build_assets", status="running", message="Building assets...")
         run_bench_command("build --app frappe --app erpnext", timeout=300)
 

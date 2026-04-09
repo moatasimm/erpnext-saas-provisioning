@@ -6,11 +6,13 @@ def after_wizard_complete(args=None):
     Runs after Setup Wizard completes, BEFORE demo data (which is enqueued).
     1. Permanently relax custom_country so demo data works
     2. Setup Saudi VAT accounts and templates
-    3. If demo requested, enqueue VAT setup for Demo Company (runs after demo)
+    3. Enable ZATCA E-Invoicing on all companies
+    4. If demo requested, enqueue VAT setup for Demo Company (runs after demo)
     """
     try:
         relax_custom_country()
         setup_saudi_vat()
+        enable_zatca_on_all_companies()
 
         if args and args.get("setup_demo"):
             register_demo_company_hook()
@@ -81,8 +83,6 @@ def create_vat_for_company(company_name, abbr):
             if current != pa:
                 frappe.db.set_value("Account", full_name, "parent_account", pa)
 
-    # Tax templates with ZATCA custom_tax_type for proper XML category code
-    # Standard Rate -> S, Zero Rate -> Z, Except Rate -> E, Out of scope -> O
     templates = [
         ("Sales Taxes and Charges Template", f"Saudi VAT 15% - {abbr}", f"VAT 15% - {abbr}", 15.0, 1, "Standard Rate"),
         ("Sales Taxes and Charges Template", f"Saudi VAT Zero - {abbr}", f"VAT Zero-Rated - {abbr}", 0.0, 0, "Zero Rate"),
@@ -114,7 +114,6 @@ def create_vat_for_company(company_name, abbr):
             except Exception:
                 pass
         else:
-            # Ensure custom_tax_type is set on existing templates
             current = frappe.db.get_value(dt, title, "custom_tax_type")
             if not current:
                 frappe.db.set_value(dt, title, "custom_tax_type", tax_type)
@@ -124,15 +123,6 @@ def create_vat_for_company(company_name, abbr):
         frappe.db.set_value("Company", company_name, "round_off_cost_center", cc)
         frappe.db.set_value("Company", company_name, "depreciation_cost_center", cc)
 
-    try:
-        if frappe.db.exists("DocType", "ZATCA Setting"):
-            z = frappe.get_single("ZATCA Setting")
-            if not z.company:
-                z.company = company_name
-                z.save(ignore_permissions=True)
-    except Exception:
-        pass
-
     frappe.db.commit()
 
 
@@ -141,6 +131,25 @@ def setup_saudi_vat():
     companies = frappe.get_all("Company", fields=["name", "abbr"])
     for co in companies:
         create_vat_for_company(co.name, co.abbr)
+
+
+def enable_zatca_on_all_companies():
+    """Enable ZATCA e-invoicing and set Phase 2 on all companies."""
+    companies = frappe.get_all("Company", pluck="name")
+    meta = frappe.get_meta("Company")
+    field_names = [f.fieldname for f in meta.fields]
+
+    for co in companies:
+        try:
+            if "custom_enable_zatca_e_invoicing" in field_names:
+                frappe.db.set_value("Company", co, "custom_enable_zatca_e_invoicing", 1)
+
+            if "custom_zatca_phase" in field_names:
+                frappe.db.set_value("Company", co, "custom_zatca_phase", "ZATCA Phase 2")
+        except Exception as e:
+            frappe.log_error(f"ZATCA enable error on {co}: {e}", "SaaS VAT Setup")
+
+    frappe.db.commit()
 
 
 def register_demo_company_hook():
@@ -157,11 +166,10 @@ def register_demo_company_hook():
 def setup_demo_company_vat():
     """
     Called from queue after demo data.
-    Wait for Demo Company to exist, then setup VAT.
+    Wait for Demo Company to exist, then setup VAT and enable ZATCA.
     """
     import time
 
-    # Wait up to 5 minutes for demo data to finish creating the company
     for i in range(30):
         demo_company = frappe.db.get_single_value("Global Defaults", "demo_company")
         if demo_company and frappe.db.exists("Company", demo_company):
@@ -173,7 +181,16 @@ def setup_demo_company_vat():
     abbr = frappe.db.get_value("Company", demo_company, "abbr")
     create_vat_for_company(demo_company, abbr)
 
-    # Fix customers without country
+    try:
+        meta = frappe.get_meta("Company")
+        field_names = [f.fieldname for f in meta.fields]
+        if "custom_enable_zatca_e_invoicing" in field_names:
+            frappe.db.set_value("Company", demo_company, "custom_enable_zatca_e_invoicing", 1)
+        if "custom_zatca_phase" in field_names:
+            frappe.db.set_value("Company", demo_company, "custom_zatca_phase", "ZATCA Phase 2")
+    except Exception:
+        pass
+
     customers = frappe.get_all(
         "Customer",
         filters={"custom_country": ["in", ["", None]]},

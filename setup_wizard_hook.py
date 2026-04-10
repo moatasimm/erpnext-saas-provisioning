@@ -260,6 +260,15 @@ def setup_demo_company_vat():
     else:
         return
 
+    # Apply industry from site_config to Demo Company before VAT setup
+    try:
+        industry = frappe.local.conf.get("custom_industry_type")
+        if industry:
+            frappe.db.set_value("Company", demo_company, "custom_industry_type", industry)
+            frappe.db.commit()
+    except Exception:
+        pass
+
     abbr = frappe.db.get_value("Company", demo_company, "abbr")
     create_vat_for_company(demo_company, abbr)
 

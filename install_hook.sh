@@ -1,11 +1,12 @@
 #!/bin/bash
 # install_hook.sh — installs all ZATCA patches + industry field
+# Fixed: Python patch scripts are now EXECUTED, not copied as files
 set -e
 
 BENCH_PATH="/home/frappe/frappe-bench"
 ZATCA_APP="$BENCH_PATH/apps/zatca_integration/zatca_integration"
 FRAPPE_UTILS="$BENCH_PATH/apps/frappe/frappe/utils"
-REPO_PATH="$(dirname "$0")"
+REPO_PATH="$(dirname "$(readlink -f "$0")")"
 
 echo "=== Installing ZATCA Hook + All Patches ==="
 
@@ -24,13 +25,19 @@ setup_wizard_complete = "zatca_integration.setup_wizard_hook.after_wizard_comple
     echo "  Added"
 fi
 
-echo "[3/9] Patching common_util.py..."
-sudo cp "$REPO_PATH/zatca_common_util_patch.py" "$ZATCA_APP/common_util.py" 2>/dev/null || echo "  Skipped (file missing)"
-echo "  Done"
+echo "[3/9] Running common_util.py patch..."
+if [ -f "$REPO_PATH/zatca_common_util_patch.py" ]; then
+    sudo python3 "$REPO_PATH/zatca_common_util_patch.py" || echo "  Patch reported error (may be already applied)"
+else
+    echo "  Skipped (patch file missing)"
+fi
 
-echo "[4/9] Patching zatca_vat.py report..."
-sudo cp "$REPO_PATH/zatca_vat_report_patch.py" "$ZATCA_APP/saudi_arabia_electronic_invoicing/report/zatca_vat/zatca_vat.py" 2>/dev/null || echo "  Skipped (file missing)"
-echo "  Done"
+echo "[4/9] Running zatca_vat.py report patch..."
+if [ -f "$REPO_PATH/zatca_vat_report_patch.py" ]; then
+    sudo python3 "$REPO_PATH/zatca_vat_report_patch.py" || echo "  Patch reported error (may be already applied)"
+else
+    echo "  Skipped (patch file missing)"
+fi
 
 echo "[5/9] Installing print format setup script..."
 sudo cp "$REPO_PATH/zatca_print_format_setup.py" "$FRAPPE_UTILS/_zatca_pf_setup.py"
@@ -68,6 +75,6 @@ echo "  1. Setup Wizard Hook  - VAT + ZATCA + Industry customizations"
 echo "  2. common_util Patch  - auto-assign default tax to invoices"
 echo "  3. ZATCA VAT Report   - skip Expense Claim if HRMS missing"
 echo "  4. Print Format       - 'Zatca PDF-A 3B Custom' with QR code"
-echo "  5. Industry Field     - 'custom_industry_type' on Company"
+echo "  5. Industry Field     - 'custom_industry_type' on Company + Construction type"
 echo ""
 echo "All new sites will have these fixes automatically."

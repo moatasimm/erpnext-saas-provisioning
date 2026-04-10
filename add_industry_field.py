@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Add custom_industry_type Link field to Company DocType.
+Add custom_industry_type field on Company + ensure Construction industry exists.
 
 Installed at:
     /home/frappe/frappe-bench/apps/frappe/frappe/utils/_add_industry_field.py
@@ -13,16 +13,15 @@ import frappe
 
 
 def run():
-    """Add custom_industry_type field to Company if not exists."""
+    _add_custom_field()
+    _ensure_industry_types()
+
+
+def _add_custom_field():
     fieldname = "custom_industry_type"
     doctype = "Company"
 
-    existing = frappe.db.exists(
-        "Custom Field",
-        {"dt": doctype, "fieldname": fieldname}
-    )
-
-    if existing:
+    if frappe.db.exists("Custom Field", {"dt": doctype, "fieldname": fieldname}):
         print(f"Field {fieldname} already exists on {doctype}")
         return
 
@@ -42,4 +41,23 @@ def run():
         frappe.clear_cache()
         print(f"Created {fieldname} on {doctype}")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Custom field error: {e}")
+
+
+def _ensure_industry_types():
+    """Ensure required industry types exist for industry-based customizations."""
+    required = ["Construction"]
+
+    for ind in required:
+        if frappe.db.exists("Industry Type", ind):
+            continue
+        try:
+            frappe.get_doc({
+                "doctype": "Industry Type",
+                "industry": ind,
+            }).insert(ignore_permissions=True)
+            print(f"Created Industry Type: {ind}")
+        except Exception as e:
+            print(f"Industry Type {ind} error: {e}")
+
+    frappe.db.commit()

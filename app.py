@@ -458,7 +458,7 @@ print("Demo setup done!")
 #  PROVISIONING PIPELINE
 # ===================================================================
 
-def provision_site(job_id, subdomain, admin_password, company_name=None, install_demo=False):
+def provision_site(job_id, subdomain, admin_password, company_name=None, install_demo=False, industry=None):    
     site_name = f"{subdomain}.{CONFIG['BASE_DOMAIN']}"
     try:
         site_dir = Path(CONFIG["BENCH_PATH"]) / "sites" / site_name

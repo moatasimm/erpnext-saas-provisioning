@@ -5,6 +5,7 @@ import re
 def after_wizard_complete(args=None):
     """Runs after Setup Wizard completes."""
     try:
+        apply_industry_from_config()
         relax_custom_country()
         setup_saudi_vat()
         create_custom_zatca_print_format()
@@ -13,6 +14,22 @@ def after_wizard_complete(args=None):
             register_demo_company_hook()
     except Exception as e:
         frappe.log_error(f"Post-wizard setup error: {e}", "SaaS VAT Setup")
+
+
+def apply_industry_from_config():
+    """Read custom_industry_type from site_config.json and apply to all companies."""
+    try:
+        industry = frappe.local.conf.get("custom_industry_type")
+        if not industry:
+            return
+        for co in frappe.get_all("Company", pluck="name"):
+            try:
+                frappe.db.set_value("Company", co, "custom_industry_type", industry)
+            except Exception:
+                pass
+        frappe.db.commit()
+    except Exception:
+        pass
 
 
 def relax_custom_country():

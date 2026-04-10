@@ -458,7 +458,7 @@ print("Demo setup done!")
 #  PROVISIONING PIPELINE
 # ===================================================================
 
-def provision_site(job_id, subdomain, admin_password, company_name=None, install_demo=False, industry=None):    
+def provision_site(job_id, subdomain, admin_password, company_name=None, install_demo=False, industry=None):
     site_name = f"{subdomain}.{CONFIG['BASE_DOMAIN']}"
     try:
         site_dir = Path(CONFIG["BENCH_PATH"]) / "sites" / site_name
@@ -503,6 +503,23 @@ def provision_site(job_id, subdomain, admin_password, company_name=None, install
         update_job(job_id, step="install_zatca_print_format", status="running", message="Installing ZATCA print format...")
         run_bench_command("execute frappe.utils._zatca_pf_setup.run", site=site_name)
 
+        update_job(job_id, step="install_industry_field", status="running", message="Installing industry field...")
+        run_bench_command("execute frappe.utils._add_industry_field.run", site=site_name)
+
+        if industry:
+            update_job(job_id, step="set_industry", status="running", message=f"Setting industry to {industry}...")
+            set_industry_script = f"""
+companies = frappe.get_all("Company", pluck="name")
+for c in companies:
+    try:
+        frappe.db.set_value("Company", c, "custom_industry_type", "{industry}")
+    except Exception as e:
+        print(f"Error: {{e}}")
+frappe.db.commit()
+print(f"Industry set on {{len(companies)}} companies")
+"""
+            run_frappe_script(site_name, set_industry_script)
+
         update_job(job_id, step="build_assets", status="running", message="Building assets...")
         run_bench_command("build --app frappe --app erpnext", timeout=300)
 
@@ -540,6 +557,7 @@ def provision():
     subdomain = data.get("subdomain", "").strip().lower()
     admin_password = data.get("admin_password", CONFIG["ADMIN_PASSWORD"])
     install_demo = data.get("install_demo", False)
+    industry = data.get("industry")
     valid, msg = validate_subdomain(subdomain)
     if not valid:
         return jsonify({"error": msg}), 400
@@ -560,7 +578,7 @@ def provision():
     }
     thread = threading.Thread(
         target=provision_site,
-        args=(job_id, subdomain, admin_password, data.get("company_name"), install_demo),
+        args=(job_id, subdomain, admin_password, data.get("company_name"), install_demo, industry),
         daemon=True,
     )
     thread.start()

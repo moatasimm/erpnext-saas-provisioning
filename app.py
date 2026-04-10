@@ -507,18 +507,8 @@ def provision_site(job_id, subdomain, admin_password, company_name=None, install
         run_bench_command("execute frappe.utils._add_industry_field.run", site=site_name)
 
         if industry:
-            update_job(job_id, step="set_industry", status="running", message=f"Setting industry to {industry}...")
-            set_industry_script = f"""
-companies = frappe.get_all("Company", pluck="name")
-for c in companies:
-    try:
-        frappe.db.set_value("Company", c, "custom_industry_type", "{industry}")
-    except Exception as e:
-        print(f"Error: {{e}}")
-frappe.db.commit()
-print(f"Industry set on {{len(companies)}} companies")
-"""
-            run_frappe_script(site_name, set_industry_script)
+            update_job(job_id, step="set_industry", status="running", message=f"Storing industry={industry} in site config...")
+            run_bench_command(f"set-config custom_industry_type {industry}", site=site_name)
 
         update_job(job_id, step="build_assets", status="running", message="Building assets...")
         run_bench_command("build --app frappe --app erpnext", timeout=300)

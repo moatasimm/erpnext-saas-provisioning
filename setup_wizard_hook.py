@@ -128,6 +128,9 @@ def apply_industry_customizations(company_name):
     if not abbr:
         return
 
+    # Link company to existing ZATCA defaults (works for all industries)
+    link_company_to_zatca_defaults(company_name)
+
     if industry in ("Construction", "Real Estate"):
         setup_construction_features(company_name, abbr)
 
@@ -294,3 +297,20 @@ def setup_demo_company_vat():
         frappe.db.set_value("Customer", c, "custom_country", "Saudi Arabia")
     if customers:
         frappe.db.commit()
+
+
+def link_company_to_zatca_defaults(company_name):
+    """Auto-link company to first available Zatca CSR Settings and Production CSID.
+    Called from apply_industry_customizations for every new site."""
+    try:
+        csr_list = frappe.get_all("Zatca CSR Settings", limit=1, pluck="name")
+        if csr_list and not frappe.db.get_value("Company", company_name, "custom_csr_settings"):
+            frappe.db.set_value("Company", company_name, "custom_csr_settings", csr_list[0])
+
+        prod_list = frappe.get_all("Production CSID", limit=1, pluck="name")
+        if prod_list and not frappe.db.get_value("Company", company_name, "custom_production_csid"):
+            frappe.db.set_value("Company", company_name, "custom_production_csid", prod_list[0])
+
+        frappe.db.commit()
+    except Exception as e:
+        frappe.log_error(f"link_company_to_zatca_defaults error: {e}", "SaaS ZATCA Link")

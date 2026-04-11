@@ -45,11 +45,12 @@ echo "  Done"
 
 echo "[6/9] Installing industry field setup script..."
 sudo cp "$REPO_PATH/add_industry_field.py" "$FRAPPE_UTILS/_add_industry_field.py"
+sudo cp "$REPO_PATH/fix_zatca_links.py" "$FRAPPE_UTILS/_fix_zatca_links.py"
 echo "  Done"
 
 echo "[7/9] Fixing permissions..."
 sudo chown -R frappe:frappe "$ZATCA_APP"
-sudo chown frappe:frappe "$FRAPPE_UTILS/_zatca_pf_setup.py" "$FRAPPE_UTILS/_add_industry_field.py"
+sudo chown frappe:frappe "$FRAPPE_UTILS/_zatca_pf_setup.py" "$FRAPPE_UTILS/_add_industry_field.py" "$FRAPPE_UTILS/_fix_zatca_links.py"
 echo "  Done"
 
 echo "[8/9] Applying patches and clearing cache for all sites..."
@@ -58,6 +59,7 @@ for site in $(ls sites/ | grep -v common_site_config); do
     if [ -f "sites/$site/site_config.json" ]; then
         sudo -u frappe bash -c "cd $BENCH_PATH && /home/frappe/.local/bin/bench --site $site execute frappe.utils._add_industry_field.run" 2>&1 || true
         sudo -u frappe bash -c "cd $BENCH_PATH && /home/frappe/.local/bin/bench --site $site execute frappe.utils._zatca_pf_setup.run" 2>&1 || true
+        sudo -u frappe bash -c "cd $BENCH_PATH && /home/frappe/.local/bin/bench --site $site execute frappe.utils._fix_zatca_links.run" 2>&1 || true
         sudo -u frappe bash -c "cd $BENCH_PATH && /home/frappe/.local/bin/bench --site $site clear-cache" 2>&1 || true
         echo "  Processed: $site"
     fi

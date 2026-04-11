@@ -7,6 +7,7 @@ def after_wizard_complete(args=None):
     try:
         apply_industry_from_config()
         relax_custom_country()
+        fix_retention_account_filter()
         setup_saudi_vat()
         create_custom_zatca_print_format()
 
@@ -42,7 +43,19 @@ def relax_custom_country():
         frappe.db.set_value("Custom Field", cf, "reqd", 0)
         frappe.db.commit()
         frappe.clear_cache()
-
+def fix_retention_account_filter():
+    """Fix ZATCA's incorrect link filter on custom_retention_account (Receivable -> Payable)."""
+    try:
+        cf_name = "Sales Invoice-custom_retention_account"
+        if frappe.db.exists("Custom Field", cf_name):
+            correct_filter = '[["Account","account_type","=","Payable"]]'
+            current = frappe.db.get_value("Custom Field", cf_name, "link_filters")
+            if current != correct_filter:
+                frappe.db.set_value("Custom Field", cf_name, "link_filters", correct_filter)
+                frappe.db.commit()
+                frappe.clear_cache()
+    except Exception:
+        pass
 
 def find_parent_account(company_name, abbr):
     for c in [f"Duties and Taxes - {abbr}", f"Tax Assets - {abbr}",

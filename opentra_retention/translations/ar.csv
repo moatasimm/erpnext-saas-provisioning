@@ -1,0 +1,11 @@
+source_text,translated_text
+Create Payment Entry,إنشاء سند قبض
+Print Retention Invoice,طباعة فاتورة الرتنشن
+Create,إنشاء
+Print,طباعة
+Creating payment entry...,جاري إنشاء سند القبض...
+Payment Entry Created,تم إنشاء سند القبض
+Payment Entry {0} created in Draft mode.<br>You can adjust the amount for partial payment before saving.,تم إنشاء سند القبض {0} في وضع المسودة.<br>يمكنك تعديل المبلغ للدفع الجزئي قبل الحفظ.
+Retention Outstanding on Invoice: {0},الاستقطاع المتبقي على الفاتورة: {0}
+All Retention Released for Invoice,تم إطلاق كامل الاستقطاع لهذه الفاتورة
+Outstanding retention for this invoice: <b>{0}</b>,الاستقطاع المستحق لهذه الفاتورة: <b>{0}</b>

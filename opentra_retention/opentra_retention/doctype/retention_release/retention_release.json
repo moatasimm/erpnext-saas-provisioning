@@ -1,0 +1,246 @@
+{
+ "actions": [],
+ "autoname": "RET-REL-.YYYY.-.#####",
+ "creation": "2026-04-18 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "company",
+  "customer",
+  "col_break_1",
+  "release_date",
+  "due_date",
+  "status",
+  "section_invoice",
+  "sales_invoice",
+  "retention_percentage",
+  "col_break_2",
+  "retention_amount",
+  "total_already_released",
+  "col_break_3",
+  "remaining_before_release",
+  "release_amount",
+  "remaining_after_release",
+  "section_notes",
+  "notes",
+  "section_accounting",
+  "release_jv",
+  "payment_transfer_jv",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "company",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Company",
+   "options": "Company",
+   "reqd": 1
+  },
+  {
+   "fieldname": "customer",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Customer",
+   "options": "Customer",
+   "reqd": 1
+  },
+  {
+   "fieldname": "col_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "release_date",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Release Date",
+   "reqd": 1
+  },
+  {
+   "fieldname": "due_date",
+   "fieldtype": "Date",
+   "label": "Due Date",
+   "description": "Payment due date (auto-fetched from original Sales Invoice)"
+  },
+  {
+   "default": "Draft",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "label": "Status",
+    "options": "Draft\nSubmitted\nPaid\nCancelled",
+   "read_only": 1,
+   "bold": 1,
+   "no_copy": 1,
+   "search_index": 1,
+   "in_filter": 1,
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "section_invoice",
+   "fieldtype": "Section Break",
+   "label": "Invoice Details"
+  },
+  {
+   "fieldname": "sales_invoice",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Sales Invoice",
+   "options": "Sales Invoice",
+   "reqd": 1
+  },
+  {
+   "fieldname": "retention_percentage",
+   "fieldtype": "Data",
+   "label": "Retention %",
+   "read_only": 1,
+   "description": "Auto-fetched from the original Sales Invoice"
+  },
+  {
+   "fieldname": "col_break_2",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "retention_amount",
+   "fieldtype": "Currency",
+   "label": "Total Retention Amount",
+   "read_only": 1,
+   "description": "Original retention amount from the invoice (auto-fetched)"
+  },
+  {
+   "fieldname": "total_already_released",
+   "fieldtype": "Currency",
+   "label": "Already Released",
+   "read_only": 1,
+   "description": "Sum of submitted Retention Releases for this invoice (excluding this document)"
+  },
+  {
+   "fieldname": "col_break_3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "remaining_before_release",
+   "fieldtype": "Currency",
+   "label": "Outstanding Before This Release",
+   "read_only": 1,
+   "description": "Retention Amount minus Already Released"
+  },
+  {
+   "fieldname": "release_amount",
+   "fieldtype": "Currency",
+   "label": "Release Amount",
+   "reqd": 1,
+   "description": "Amount to release \u2014 can be partial (e.g. 50%) or full"
+  },
+  {
+   "fieldname": "remaining_after_release",
+   "fieldtype": "Currency",
+   "label": "Remaining After This Release",
+   "read_only": 1,
+   "description": "Retention still outstanding after this release is submitted"
+  },
+  {
+   "fieldname": "section_notes",
+   "fieldtype": "Section Break",
+   "label": "Notes"
+  },
+  {
+   "fieldname": "notes",
+   "fieldtype": "Text",
+   "label": "Notes"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_accounting",
+   "fieldtype": "Section Break",
+   "label": "Accounting"
+  },
+  {
+   "description": "Auto-created JV on submit: DR Retention Released (1312), CR Retention Receivable (1311)",
+   "fieldname": "release_jv",
+   "fieldtype": "Link",
+   "label": "Release JV",
+   "no_copy": 1,
+   "options": "Journal Entry",
+   "read_only": 1
+  },
+  {
+   "description": "Auto-created JV when Payment Entry is made: DR AR (Debtors) [ref: SI], CR Retention Released (1312)",
+   "fieldname": "payment_transfer_jv",
+   "fieldtype": "Link",
+   "label": "Payment Transfer JV",
+   "no_copy": 1,
+   "options": "Journal Entry",
+   "read_only": 1
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Retention Release",
+   "print_hide": 1,
+   "read_only": 1
+  }
+ ],
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2026-04-19 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Opentra Retention",
+ "name": "Retention Release",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 1,
+   "cancel": 1,
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "Accounts Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+   {
+    "create": 1,
+    "email": 1,
+    "export": 1,
+    "print": 1,
+    "read": 1,
+    "report": 1,
+    "role": "Accounts User",
+    "share": 1,
+    "submit": 1,
+    "write": 1
+   },
+   {
+    "amend": 0,
+    "cancel": 0,
+    "create": 0,
+    "delete": 0,
+    "email": 1,
+    "export": 0,
+    "print": 1,
+    "read": 1,
+    "report": 1,
+    "role": "Retention Portal User",
+    "share": 0,
+    "submit": 0,
+    "write": 0
+   }
+  ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

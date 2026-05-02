@@ -106,31 +106,46 @@ bench --site <site> clear-cache
 > `validate` hooks silently don't fire — documents will be created in an inconsistent state
 > (missing JVs, missing GL entries) with no error logged.
 
-### Manual per-company setup (cannot be automated)
+### Per-company setup (automated)
 
-After installing, each company needs these two steps done **once** via the ERPNext UI:
+`after_install` (and `after_migrate`) now auto-creates the retention accounts for all existing
+companies and wires them into Company settings. New companies get the same treatment via the
+`Company.after_insert` hook.
 
-1. **Create Chart of Accounts entries** (Accounting → Chart of Accounts):
-   - `1311 - Retention Receivable` — account type: **Receivable Retention**
-   - `1312 - Retention Released Receivable` — account type: **Receivable** (standard)
+**What `create_retention_accounts()` does per company:**
+1. Finds the Accounts Receivable parent group (parent of the Debtors account)
+2. Creates `1311 - Retention Receivable` (account type: Receivable Retention) — skips if exists
+3. Creates `1312 - Retention Released Receivable` (account type: Receivable) — skips if exists
+4. Sets both as defaults in Company → Retention Settings — skips if already set
 
-2. **Link accounts in Company settings** (Setup → Company → Accounts tab):
-   - *Default Retention Receivable Account* → `1311 - Retention Receivable`
-   - *Default Retention Released Account* → `1312 - Retention Released Receivable`
+**Nothing needs to be done manually.** If the accounts already exist (manually created before this
+version), install.py detects them and skips creation but still wires the defaults if unset.
 
-   Without these, submitting a Sales Invoice with retention will show a warning and skip the JV,
-   and submitting a Retention Release will throw an error.
+> **Fallback (edge case):** If install runs before the company's Chart of Accounts exists (e.g.
+> on a brand-new ERPNext installation where Company is created before `bench install-app`),
+> `create_retention_accounts()` will print a warning and skip. Run `after_install` again after
+> the CoA is set up:
+> ```bash
+> bench --site <site> execute opentra_retention.setup.install.after_install
+> ```
 
 ## Architecture
 
 ### Retention Lifecycle
 
-The core business flow is:
-1. **Sales Invoice submit** → `custom/sales_invoice.py:on_submit()` creates a **Retention JV** that DRs the retention receivable account and CRs the AR account, removing retention from the customer's outstanding balance.
-2. **Retention Release submit** → `opentra_retention/doctype/retention_release/retention_release.py:on_submit()` creates a **Release JV** that reverses the original hold (DR AR, CR Retention Receivable), making the amount payable again.
-3. **Payment Entry submit** → `custom/payment_entry.py` marks linked Retention Releases as "Paid" when the payment covers the released amount.
+Four GL events across two intermediate accounts (1311 and 1312):
 
-Status flow: `Draft → Submitted (Released) → Paid`
+1. **Sales Invoice submit** → `custom/sales_invoice.py:on_submit()` creates a **Retention JV**:
+   `DR 1311 Retention Receivable | CR AR (Debtors)` — withholds retention from AR outstanding.
+2. **Retention Release submit** → `retention_release.py:on_submit()` creates a **Release JV**:
+   `DR 1312 Retention Released | CR 1311` — moves the amount to "approved for payment."
+3. **Create Payment Entry** → `api.make_retention_payment_entry()` auto-creates a **Transfer JV**:
+   `DR AR [ref: SI] | CR 1312` — restores SI outstanding so the PE can reference it.
+   Then creates a Draft Payment Entry (`paid_from = AR`, `paid_to = Bank`).
+4. **Payment Entry submit** → `custom/payment_entry.py:on_submit()` marks the Retention Release
+   as "Paid". If PE is cancelled, Transfer JV is also cancelled and status reverts to "Submitted."
+
+Status flow: `Draft → Submitted → Paid`  (cancellation branch: `→ Cancelled`)
 
 ### Key Files
 
@@ -148,13 +163,16 @@ Status flow: `Draft → Submitted (Released) → Paid`
 
 ### Frappe Hooks (`hooks.py`)
 
-DocType events are registered here and route to handlers in `custom/`:
-- `Sales Invoice` → `on_submit`, `on_cancel`, `validate`
-- `Payment Entry` → `on_submit`, `on_cancel`
-- `override_doctype_dashboards` → adds Retention Release panel to Sales Invoice dashboard
-- `doctype_js` → loads public JS for Retention Release and Sales Invoice
-- `report_permission_map` → grants Retention Status Report access to three roles
-- `after_install` / `after_migrate` → runs `setup/install.py:after_install()`
+| Hook | Value | Effect |
+|------|-------|--------|
+| `after_install` / `after_migrate` | `setup/install.py:after_install` | Creates fields, account type, accounts, print format, workspaces, role |
+| `fixtures` | `Report: Retention Status Report` | Bundles report so it is created on install |
+| `doctype_js` | Retention Release, Sales Invoice | Loads public JS for both DocTypes |
+| `override_doctype_dashboards` | `dashboard/sales_invoice.py:get_data` | Adds Retention Release panel to SI connections panel |
+| `report_permission_map` | Retention Status Report | Grants report access to 3 roles |
+| `doc_events → Sales Invoice` | `validate`, `on_submit`, `on_cancel` | Auto-calc retention; create/cancel Retention JV |
+| `doc_events → Payment Entry` | `on_submit`, `on_cancel` | Mark/revert Retention Release as Paid |
+| `doc_events → Company` | `after_insert` | Auto-creates 1311 + 1312 accounts for every new company |
 
 ### Portal Multi-tenancy
 

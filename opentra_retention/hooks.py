@@ -5,9 +5,14 @@ app_description = "Retention Management for ERPNext"
 app_email = "admin@opentech.sa"
 app_license = "mit"
 
-# Run after install and after migrate (to ensure custom fields exist)
+# Run after install and after migrate (to ensure custom fields + accounts exist)
 after_install = "opentra_retention.setup.install.after_install"
 after_migrate = "opentra_retention.setup.install.after_install"
+
+# Bundle the Retention Status Report so it is created on install/migrate
+fixtures = [
+    {"doctype": "Report", "filters": [["name", "in", ["Retention Status Report"]]]},
+]
 
 # Client-side scripts per DocType
 doctype_js = {
@@ -20,7 +25,7 @@ override_doctype_dashboards = {
     "Sales Invoice": "opentra_retention.dashboard.sales_invoice.get_data",
 }
 
-# Document Events
+# Report role access
 report_permission_map = {
     "Retention Status Report": ["Accounts Manager", "Accounts User", "Retention Portal User"],
 }
@@ -34,5 +39,9 @@ doc_events = {
     "Payment Entry": {
         "on_submit": "opentra_retention.custom.payment_entry.on_submit",
         "on_cancel": "opentra_retention.custom.payment_entry.on_cancel",
+    },
+    # Auto-create retention accounts (1311 + 1312) for every new company
+    "Company": {
+        "after_insert": "opentra_retention.setup.install.on_company_created",
     },
 }

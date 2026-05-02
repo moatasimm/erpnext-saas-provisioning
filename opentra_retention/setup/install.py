@@ -7,13 +7,15 @@ def after_install():
     try:
         add_receivable_retention_account_type()
         create_retention_custom_fields()
+        frappe.db.commit()  # flush schema changes so account creation can read the new columns
         create_retention_print_format()
         add_to_selling_workspace()
         add_report_to_workspaces()
         create_portal_user_role()
         create_user_customer_field()
+        create_retention_accounts()
         frappe.db.commit()
-        print("✅ opentra_retention: custom fields, account type, print format, workspace, and portal role installed.")
+        print("✅ opentra_retention: custom fields, account type, print format, accounts, workspace, and portal role installed.")
     except Exception as e:
         frappe.log_error(f"opentra_retention install error: {e}", "Retention Install")
         print(f"❌ opentra_retention install error: {e}")
@@ -515,3 +517,122 @@ def create_user_customer_field():
             print("  + Custom Field 'User-custom_customer' already exists — skipping.")
     except Exception as e:
         print(f"  ! Could not create Custom Field 'User-custom_customer': {e}")
+
+
+def create_retention_accounts():
+    """
+    Auto-create 1311 Retention Receivable and 1312 Retention Released Receivable
+    accounts for every company that does not already have them, then set as Company
+    defaults. Safe to call multiple times (idempotent).
+    """
+    companies = frappe.get_all("Company", fields=["name", "abbr"])
+    if not companies:
+        print("  + No companies found — accounts will be created when first company is added.")
+        return
+    for co in companies:
+        _create_company_retention_accounts(co.name, co.abbr)
+
+
+def _create_company_retention_accounts(company, abbr):
+    """
+    Create the two retention accounts for a single company and wire them into
+    Company defaults. Called by create_retention_accounts() (install) and
+    on_company_created() (new company hook).
+    """
+    # Locate the parent Accounts Receivable group: use the parent of the Debtors account.
+    ar_account = frappe.db.get_value("Company", company, "default_receivable_account")
+    if not ar_account:
+        ar_account = frappe.db.get_value(
+            "Account",
+            {"company": company, "account_type": "Receivable", "is_group": 0},
+            "name",
+        )
+    if not ar_account:
+        print(f"  ! No Receivable account found for {company} — skipping retention account creation.")
+        return
+
+    ar_parent = frappe.db.get_value("Account", ar_account, "parent_account")
+    if not ar_parent:
+        print(f"  ! Cannot determine AR parent account for {company} — skipping.")
+        return
+
+    created_1311 = None
+    created_1312 = None
+
+    # ── 1311 Retention Receivable (Receivable Retention type) ────────────────
+    existing_1311 = frappe.db.get_value(
+        "Account", {"account_name": "Retention Receivable", "company": company}, "name"
+    )
+    if existing_1311:
+        print(f"  + {existing_1311} already exists for {company} — skipping.")
+        created_1311 = existing_1311
+    else:
+        try:
+            doc = frappe.get_doc({
+                "doctype":        "Account",
+                "account_name":   "Retention Receivable",
+                "account_number": "1311",
+                "account_type":   "Receivable Retention",
+                "parent_account": ar_parent,
+                "company":        company,
+                "is_group":       0,
+                "root_type":      "Asset",
+                "report_type":    "Balance Sheet",
+            })
+            doc.insert(ignore_permissions=True)
+            created_1311 = doc.name
+            print(f"  + Created {created_1311} for {company}.")
+        except Exception as e:
+            print(f"  ! Could not create 1311 Retention Receivable for {company}: {e}")
+
+    # ── 1312 Retention Released Receivable (standard Receivable type) ─────────
+    existing_1312 = frappe.db.get_value(
+        "Account", {"account_name": "Retention Released Receivable", "company": company}, "name"
+    )
+    if existing_1312:
+        print(f"  + {existing_1312} already exists for {company} — skipping.")
+        created_1312 = existing_1312
+    else:
+        try:
+            doc = frappe.get_doc({
+                "doctype":        "Account",
+                "account_name":   "Retention Released Receivable",
+                "account_number": "1312",
+                "account_type":   "Receivable",
+                "parent_account": ar_parent,
+                "company":        company,
+                "is_group":       0,
+                "root_type":      "Asset",
+                "report_type":    "Balance Sheet",
+            })
+            doc.insert(ignore_permissions=True)
+            created_1312 = doc.name
+            print(f"  + Created {created_1312} for {company}.")
+        except Exception as e:
+            print(f"  ! Could not create 1312 Retention Released Receivable for {company}: {e}")
+
+    # ── Set as Company defaults (only if not already configured) ─────────────
+    updates = {}
+    if created_1311 and not frappe.db.get_value("Company", company, "default_retention_account"):
+        updates["default_retention_account"] = created_1311
+    if created_1312 and not frappe.db.get_value("Company", company, "default_retention_released_account"):
+        updates["default_retention_released_account"] = created_1312
+    if updates:
+        frappe.db.set_value("Company", company, updates)
+        print(f"  + Set retention account defaults for {company}.")
+
+
+def on_company_created(doc, method=None):
+    """
+    Hook: fires on Company after_insert. Auto-creates the two retention accounts
+    for the new company. ERPNext sets up its default CoA in its own after_insert
+    hook (which runs before ours), so the AR account should already exist.
+    """
+    try:
+        _create_company_retention_accounts(doc.name, doc.abbr)
+        frappe.db.commit()
+    except Exception as e:
+        frappe.log_error(
+            title="Retention Account Setup Error",
+            message=f"Could not create retention accounts for {doc.name}: {e}",
+        )

@@ -13,6 +13,7 @@ reference rows — the Retention Release is linked via custom_retention_release.
 """
 
 import frappe
+from frappe.utils import flt
 
 
 def on_submit(doc, method=None):
@@ -20,8 +21,21 @@ def on_submit(doc, method=None):
         return
     try:
         release = frappe.get_doc("Retention Release", doc.custom_retention_release)
-        if release.docstatus == 1 and release.status == "Submitted":
+        if release.docstatus != 1 or release.status != "Submitted":
+            return
+
+        paid_amount = flt(doc.paid_amount)
+        release_amount = flt(release.release_amount)
+
+        if paid_amount >= release_amount:
             frappe.db.set_value("Retention Release", release.name, "status", "Paid")
+        else:
+            frappe.msgprint(
+                f"Partial payment of {paid_amount:,.2f} recorded. "
+                f"Retention Release requires {release_amount:,.2f} to be marked as Paid.",
+                indicator="orange",
+                alert=True,
+            )
     except Exception as exc:
         frappe.log_error(
             title="Retention Release — mark_paid error",

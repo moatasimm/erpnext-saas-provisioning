@@ -93,6 +93,31 @@ frappe.ui.form.on('Retention Release', {
 });
 
 
+// Warn if the user edits paid_amount on a Retention Payment Entry to exceed release_amount
+frappe.ui.form.on('Payment Entry', {
+    paid_amount: function (frm) {
+        if (!frm.doc.custom_retention_release) return;
+        frappe.db.get_value(
+            'Retention Release',
+            frm.doc.custom_retention_release,
+            'release_amount',
+            function (r) {
+                if (r && flt(frm.doc.paid_amount) > flt(r.release_amount)) {
+                    frappe.msgprint({
+                        title: __('Warning'),
+                        message: __(
+                            'Paid amount exceeds the retention release amount of <b>{0}</b>.',
+                            [format_currency(r.release_amount)]
+                        ),
+                        indicator: 'orange',
+                    });
+                }
+            }
+        );
+    }
+});
+
+
 /**
  * Fetch invoice retention status and populate read-only balance fields
  * on the form header as a dashboard indicator.

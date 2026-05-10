@@ -401,6 +401,9 @@ def make_retention_payment_entry(retention_release):
                 "WRONG_STATUS",
             )
 
+        if flt(doc.release_amount) <= 0:
+            return _error("Release amount must be greater than zero", "INVALID_AMOUNT")
+
         # ── Check Release JV exists ──────────────────────────────────────────────
         if not doc.release_jv:
             return _error(

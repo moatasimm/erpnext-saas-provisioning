@@ -520,6 +520,11 @@ def make_retention_payment_entry(retention_release):
         pe.paid_from_account_currency = ar_currency
         pe.paid_to                    = paid_to
         pe.paid_to_account_currency   = paid_to_currency
+        pe.reference_no               = doc.name
+        pe.reference_date             = today()
+        default_mop = frappe.db.get_value("Mode of Payment", {"type": "Cash"}, "name")
+        if default_mop:
+            pe.mode_of_payment = default_mop
         pe.source_exchange_rate       = 1
         pe.target_exchange_rate       = 1
         # Always set to full release_amount — partial payments are not supported for a single

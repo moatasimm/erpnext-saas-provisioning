@@ -43,17 +43,7 @@ frappe.ui.form.on('Retention Release', {
                     freeze_message: __('Creating payment entry...'),
                     callback: function (r) {
                         if (r.message && r.message.success && r.message.data && r.message.data.name) {
-                            var pe_name = r.message.data.name;
-                            frappe.msgprint({
-                                title: __('Payment Entry Created'),
-                                message: __(
-                                    'Payment Entry <b>{0}</b> created in Draft mode.<br>'
-                                    + 'You can adjust the amount for partial payment before saving.',
-                                    [pe_name]
-                                ),
-                                indicator: 'green',
-                            });
-                            frappe.set_route('Form', 'Payment Entry', pe_name);
+                            frappe.set_route('Form', 'Payment Entry', r.message.data.name);
                         }
                     }
                 });

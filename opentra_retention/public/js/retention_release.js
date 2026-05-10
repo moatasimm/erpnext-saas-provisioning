@@ -93,7 +93,7 @@ frappe.ui.form.on('Retention Release', {
 });
 
 
-// Warn if the user edits paid_amount on a Retention Payment Entry to exceed release_amount
+// Enforce exact payment amount on Retention Payment Entries — reset and show error if wrong
 frappe.ui.form.on('Payment Entry', {
     paid_amount: function (frm) {
         if (!frm.doc.custom_retention_release) return;
@@ -102,15 +102,40 @@ frappe.ui.form.on('Payment Entry', {
             frm.doc.custom_retention_release,
             'release_amount',
             function (r) {
-                if (r && flt(frm.doc.paid_amount) > flt(r.release_amount)) {
+                if (!r || !r.release_amount) return;
+                const release_amount = flt(r.release_amount);
+                const paid_amount = flt(frm.doc.paid_amount);
+
+                if (paid_amount < release_amount) {
                     frappe.msgprint({
-                        title: __('Warning'),
+                        title: __('تنبيه / Warning'),
                         message: __(
-                            'Paid amount exceeds the retention release amount of <b>{0}</b>.',
-                            [format_currency(r.release_amount)]
+                            'المبلغ المدفوع ({0}) أقل من مبلغ الإفراج عن الضمان ({1}).\n\n'
+                            + 'لا يمكن دفع مبلغ جزئي لسند الإفراج عن الضمان.\n'
+                            + 'إذا كنت ترغب في الدفع الجزئي، أنشئ سند إفراج جديد بالمبلغ المطلوب.\n\n'
+                            + 'Partial payment is not allowed for a Retention Release.\n'
+                            + 'To pay partially, create a new Retention Release for the partial amount.',
+                            [format_currency(paid_amount), format_currency(release_amount)]
                         ),
-                        indicator: 'orange',
+                        indicator: 'red',
                     });
+                    frm.set_value('paid_amount', release_amount);
+                    frm.set_value('received_amount', release_amount);
+                }
+
+                if (paid_amount > release_amount) {
+                    frappe.msgprint({
+                        title: __('تنبيه / Warning'),
+                        message: __(
+                            'المبلغ المدفوع ({0}) أكبر من مبلغ الإفراج عن الضمان ({1}).\n\n'
+                            + 'يجب أن يساوي المبلغ المدفوع مبلغ الإفراج عن الضمان تماماً.\n\n'
+                            + 'Payment must equal the retention release amount exactly ({1}).',
+                            [format_currency(paid_amount), format_currency(release_amount)]
+                        ),
+                        indicator: 'red',
+                    });
+                    frm.set_value('paid_amount', release_amount);
+                    frm.set_value('received_amount', release_amount);
                 }
             }
         );

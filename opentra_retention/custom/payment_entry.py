@@ -27,15 +27,36 @@ def on_submit(doc, method=None):
         paid_amount = flt(doc.paid_amount)
         release_amount = flt(release.release_amount)
 
-        if paid_amount >= release_amount:
-            frappe.db.set_value("Retention Release", release.name, "status", "Paid")
-        else:
-            frappe.msgprint(
-                f"Partial payment of {paid_amount:,.2f} recorded. "
-                f"Retention Release requires {release_amount:,.2f} to be marked as Paid.",
-                indicator="orange",
-                alert=True,
+        if paid_amount < release_amount:
+            frappe.throw(
+                f"المبلغ المدفوع ({paid_amount:,.2f}) أقل من مبلغ الإفراج عن الضمان ({release_amount:,.2f}).\n\n"
+                f"يجب دفع المبلغ كاملاً دفعةً واحدة.\n\n"
+                f"إذا كنت ترغب في دفع مبلغ جزئي، يُرجى إنشاء سند إفراج عن ضمان (Retention Release) "
+                f"بالمبلغ الجزئي المطلوب ({paid_amount:,.2f}) ثم دفعه كاملاً.\n\n"
+                f"Payment amount ({paid_amount:,.2f}) is less than the retention release amount ({release_amount:,.2f}).\n"
+                f"Payment must be made in full in a single payment.\n"
+                f"To pay a partial amount, please create a new Retention Release for the partial amount "
+                f"({paid_amount:,.2f}) and pay it in full.",
+                title="خطأ في مبلغ الدفع / Payment Amount Error",
             )
+
+        if paid_amount > release_amount:
+            frappe.throw(
+                f"المبلغ المدفوع ({paid_amount:,.2f}) أكبر من مبلغ الإفراج عن الضمان ({release_amount:,.2f}).\n\n"
+                f"يجب أن يساوي المبلغ المدفوع مبلغ الإفراج عن الضمان تماماً.\n\n"
+                f"Payment amount ({paid_amount:,.2f}) exceeds the retention release amount ({release_amount:,.2f}).\n"
+                f"Payment must equal the retention release amount exactly.",
+                title="خطأ في مبلغ الدفع / Payment Amount Error",
+            )
+
+        frappe.db.set_value("Retention Release", release.name, "status", "Paid")
+        frappe.msgprint(
+            f"تم تسجيل دفع الضمان بنجاح بمبلغ {release_amount:,.2f} SAR",
+            indicator="green",
+            alert=True,
+        )
+    except frappe.ValidationError:
+        raise
     except Exception as exc:
         frappe.log_error(
             title="Retention Release — mark_paid error",

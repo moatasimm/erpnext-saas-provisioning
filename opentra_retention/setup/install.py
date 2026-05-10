@@ -559,7 +559,7 @@ def _create_company_retention_accounts(company, abbr):
     created_1311 = None
     created_1312 = None
 
-    # ── 1311 Retention Receivable (Receivable Retention type) ────────────────
+    # ── 1311 Retention Receivable ────────────────────────────────────────────
     existing_1311 = frappe.db.get_value(
         "Account", {"account_name": "Retention Receivable", "company": company}, "name"
     )
@@ -572,7 +572,7 @@ def _create_company_retention_accounts(company, abbr):
                 "doctype":        "Account",
                 "account_name":   "Retention Receivable",
                 "account_number": "1311",
-                "account_type":   "Receivable Retention",
+                "account_type":   "Receivable",
                 "parent_account": ar_parent,
                 "company":        company,
                 "is_group":       0,

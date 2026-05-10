@@ -62,6 +62,7 @@ def get_data(filters):
             si.project,
             si.posting_date,
             si.grand_total,
+            si.debit_to      AS ar_account,
             si.custom_retention_percentage AS retention_pct,
             si.custom_retention_amount     AS retention_total
         FROM `tabSales Invoice` si
@@ -73,9 +74,6 @@ def get_data(filters):
     )
 
     retention_account = frappe.db.get_value("Company", company, "default_retention_account")
-    retention_released_account = frappe.db.get_value(
-        "Company", company, "default_retention_released_account"
-    )
 
     status_filter = filters.get("retention_status")
     data = []
@@ -83,7 +81,9 @@ def get_data(filters):
     for inv in invoices:
         retention_total = flt(inv.retention_total)
         si_name = inv.sales_invoice
+        ar_account = inv.ar_account
 
+        # 1311 GL balance: amount still withheld
         retention_held = flt(
             frappe.db.sql(
                 """
@@ -98,21 +98,29 @@ def get_data(filters):
             )[0][0]
         )
 
-        retention_released = flt(
+        # Actual cash collected: sum of PE credits on AR for this SI, filtered to
+        # retention PEs only (custom_retention_release set). Using PE GL directly
+        # because the Transfer JV clears 1312 up-front (even for partial payments),
+        # so the 1312 balance alone cannot tell us how much was actually paid.
+        retention_paid = flt(
             frappe.db.sql(
                 """
-                SELECT COALESCE(SUM(debit) - SUM(credit), 0)
-                FROM `tabGL Entry`
-                WHERE account = %s
-                  AND against_voucher = %s
-                  AND against_voucher_type = 'Sales Invoice'
-                  AND is_cancelled = 0
+                SELECT COALESCE(SUM(gle.credit), 0)
+                FROM `tabGL Entry` gle
+                JOIN `tabPayment Entry` pe ON pe.name = gle.voucher_no
+                WHERE gle.against_voucher = %s
+                  AND gle.account = %s
+                  AND gle.voucher_type = 'Payment Entry'
+                  AND gle.is_cancelled = 0
+                  AND pe.custom_retention_release IS NOT NULL
+                  AND pe.custom_retention_release != ''
                 """,
-                (retention_released_account, si_name),
+                (si_name, ar_account),
             )[0][0]
-        ) if retention_released_account else 0.0
+        ) if ar_account else 0.0
 
-        retention_paid = retention_total - retention_held - retention_released
+        # Approved-for-payment but not yet collected (may be in AR after Transfer JV)
+        retention_released = max(0.0, retention_total - retention_held - retention_paid)
         retention_outstanding = retention_held + retention_released
 
         if retention_outstanding <= 0.01:

@@ -132,3 +132,24 @@ See `docs/MIGRATION_2026_05_12.md` for full migration log.
 Total infrastructure cost at MVP: **$5.59/month**
 
 See `docs/ARCHITECTURE.md` for full platform architecture.
+
+---
+
+## [Infrastructure] — 2026-05-12 (Evening)
+
+### opentra-ksa-compliance — Private Repo Established
+
+- Created private repo: `github.com/moatasimm/opentra-ksa-compliance`
+- Based on lavaloon-eg/ksa_compliance v0.61.2 (AGPL license)
+- Removed all LavaLoon premium announcement banners (JS + DB)
+- This is now the **official Opentra ZATCA app**
+
+### Customer Server (77.42.75.231) Cleaned Up
+- Removed `zatca_integration` (Beveren-Software-Inc) — replaced by ksa_compliance
+- Updated ksa_compliance upstream → moatasimm/opentra-ksa-compliance
+- Added `ignore_app_updates: ksa_compliance` to common_site_config
+
+### Both Servers Secured
+- `ignore_app_updates: ksa_compliance` applied on 178.105.139.103 and 77.42.75.231
+- ksa_compliance installs locally — no GitHub dependency at install time
+- Updates are manual and controlled, from Opentra repo only

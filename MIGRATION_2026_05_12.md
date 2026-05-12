@@ -98,3 +98,36 @@ Cloudflare R2:
 | `training.opentech.sa` | `45.90.220.57` (Hostinger) | `178.105.139.103` (Hetzner) | ✅ Updated |
 
 DNS managed via Cloudflare. Both records set to "DNS only" (grey cloud) during migration, to be switched to "Proxied" after 1 week stability verification.
+
+---
+
+## Additional Work — Same Day
+
+### opentra-ksa-compliance Private Repo Created
+- New private GitHub repo: `https://github.com/moatasimm/opentra-ksa-compliance`
+- Based on lavaloon-eg/ksa_compliance v0.61.2 (AGPL)
+- Modifications: all premium announcement banners removed from JS files and database
+- Fresh git history (grafted history removed via archive + re-init)
+- Both servers updated: `git remote upstream` → `moatasimm/opentra-ksa-compliance`
+
+### zatca_integration Removed (77.42.75.231)
+- `zatca_integration` app from Beveren-Software-Inc was installed on customer server
+- Not installed on any site (demo/fresh/test2)
+- Removed cleanly: `bench remove-app zatca_integration`
+
+### App Update Protection
+Applied on both servers:
+```bash
+bench config set-common-config -c ignore_app_updates ksa_compliance
+```
+This prevents `bench update` from pulling from lavaloon upstream.
+
+### Local Installation Confirmed
+`ksa_compliance` installs locally on both servers without GitHub:
+```bash
+bench --site {site} install-app ksa_compliance
+```
+
+### apps.json Updated (77.42.75.231)
+- Removed: `zatca_integration` entry
+- Added: `ksa_compliance` with `remote_url: github.com/moatasimm/opentra-ksa-compliance`

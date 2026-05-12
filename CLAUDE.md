@@ -1,225 +1,156 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with this repository.
 
-## Server Info (Updated May 2026)
+## Project Overview
 
-| | Details |
-|--|---------|
-| | Old | New |
-|--|-----|-----|
-| **Provider** | Hostinger (OpenVZ) | Hetzner CX23 (KVM) |
-| **IP** | `45.90.220.57` | `178.105.139.103` |
-| **Admin Portal** | `https://erp.opentech.sa` → `45.90.220.57` | `https://erp.opentech.sa` → `178.105.139.103` |
-| **Training** | `https://training.opentech.sa` → `45.90.220.57` | `https://training.opentech.sa` → `178.105.139.103` |
-| **bench path** | `/home/frappe/frappe-bench` | `/home/frappe/frappe-bench` |
-| **frappe version** | 15.100.1 | 15.100.1 |
-| **erpnext version** | 15.98.1 | 15.98.1 |
-| **Backup** | — | Cloudflare R2 — daily 2:00 AM UTC |
-| **Status** | ⚠️ Being decommissioned | ✅ Production |
+**Opentra** — ERPNext SaaS platform for Saudi Arabia & GCC market.
+**GitHub:** https://github.com/moatasimm/erpnext-saas-provisioning (branch: develop)
 
-## Documentation
+---
 
-### Platform-level docs (Opentra SaaS)
-Lives at `/home/frappe/frappe-bench/opentra-docs/`:
+## Servers
 
-| File | Contents |
-|------|----------|
-| [`opentra-docs/ARCHITECTURE.md`](/home/frappe/frappe-bench/opentra-docs/ARCHITECTURE.md) | Full platform architecture: infrastructure, multi-tenancy, portals, provisioning, lifecycle |
-| [`opentra-docs/DECISIONS.md`](/home/frappe/frappe-bench/opentra-docs/DECISIONS.md) | 16 Architecture Decision Records with rationale and trade-offs |
-| [`opentra-docs/CHANGELOG.md`](/home/frappe/frappe-bench/opentra-docs/CHANGELOG.md) | Session-by-session build history (Sessions 1–5, Apr 2026) |
-| [`opentra-docs/features/retention.md`](/home/frappe/frappe-bench/opentra-docs/features/retention.md) | Retention feature: business context, accounting model, bugs fixed, known limits |
-| [`opentra-docs/features/retention_requirements.md`](/home/frappe/frappe-bench/opentra-docs/features/retention_requirements.md) | Original client requirements brief (source of truth for intended behaviour) |
+### Server 1 — Admin Portal (erp.opentech.sa)
+| | |
+|--|--|
+| Provider | Hetzner CX23 (KVM) |
+| IP | `178.105.139.103` |
+| OS | Ubuntu 22.04.4 LTS |
+| RAM | 4 GB |
+| Disk | 40 GB NVMe |
+| Cost | $5.59/month |
+| bench path | `/home/frappe/frappe-bench` |
+| Sites | `erp.opentech.sa`, `training.opentech.sa` |
+| Previous IP | `45.90.220.57` (Hostinger — decommissioning) |
 
-**Test scripts** (not part of app source — do not deploy):
+**DNS (Cloudflare):**
+- `erp.opentech.sa` → `178.105.139.103` (DNS only, to be Proxied after stability)
+- `training.opentech.sa` → `178.105.139.103`
 
-| File | Contents |
-|------|----------|
-| [`opentra-docs/tests/test_retention_full.py`](/home/frappe/frappe-bench/opentra-docs/tests/test_retention_full.py) | Full end-to-end retention flow test |
-| [`opentra-docs/tests/test_retention_payment.py`](/home/frappe/frappe-bench/opentra-docs/tests/test_retention_payment.py) | Payment Entry retention GL test |
-| [`opentra-docs/tests/test_run.sh`](/home/frappe/frappe-bench/opentra-docs/tests/test_run.sh) | Shell wrapper to run tests via bench execute |
+**Apps installed:**
+- frappe 15.100.1
+- erpnext 15.98.1
+- hrms 15.58.1
+- ksa_compliance 0.61.2 (from `moatasimm/opentra-ksa-compliance`)
+- ksa_vat_reports (custom, local)
+- erpnext_enhancement (custom, 450-Learning)
+- lending 0.0.1
+- payments 0.0.1
 
-**Archive** (source session logs, SQL diagnostics, original scripts):
+---
 
-```
-opentra-docs/archive/
-├── source/        ← chat_2.md … chat_6.md, ANALYSIS_REPORT.md
-├── scripts/       ← vat_setup_testclient_opentra_opentech_sa.py
-├── retention_doc.pdf
-└── *.sql / *.sh   ← workspace diagnostics, fetch scripts
-```
+### Server 2 — Customer/Opentra Server
+| | |
+|--|--|
+| Provider | Hetzner (existing) |
+| IP | `77.42.75.231` |
+| bench path | `/home/frappe/frappe-bench` |
+| Sites | `demo.opentra.opentech.sa`, `fresh.opentra.opentech.sa`, `test2.opentra.opentech.sa` |
 
-### App-level docs (this app)
-Lives in [`docs/`](docs/):
+**Apps installed:**
+- frappe 15.103.1
+- erpnext 15.102.0
+- ksa_compliance 0.60.1 (from `moatasimm/opentra-ksa-compliance`)
+- opentra_retention 0.0.1 ✅ (complete & tested)
 
-| File | Contents |
-|------|----------|
-| [`docs/api.md`](docs/api.md) | All 9 API endpoints — params, response shapes, error codes, curl examples |
-| [`docs/API.md`](docs/API.md) | Extended API reference (alternate format) |
-| [`docs/feature.md`](docs/feature.md) | Links to platform docs |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | App-level architecture detail |
-| [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | App versioned changelog |
+**Removed today:**
+- `zatca_integration` (Beveren-Software-Inc) — removed, replaced by ksa_compliance
 
-## Overview
+---
 
-`opentra_retention` is a Frappe/ERPNext custom app that implements a payment retention workflow. It automates the creation of Journal Entries for retention deductions on Sales Invoices and manages the lifecycle of releasing retained amounts back to the customer.
+## Key Decisions Made
 
-## Commands
+### ZATCA Compliance App
+- **Official repo:** `https://github.com/moatasimm/opentra-ksa-compliance` (private)
+- Based on lavaloon-eg/ksa_compliance v0.61.2 (AGPL)
+- **Modifications:** Premium announcement banners removed from JS + DB
+- **Both servers:** upstream remote → moatasimm/opentra-ksa-compliance
+- **Protection:** `ignore_app_updates: ksa_compliance` in common_site_config
+- **Installation:** Local (no GitHub needed) — `bench --site {site} install-app ksa_compliance`
 
-### Site & DB (test environment)
+### Backup System
+- **Storage:** Cloudflare R2 bucket `opentech-backups`
+- **Endpoint:** `https://d506c076138814094ffbbe5bd99e90a4.r2.cloudflarestorage.com`
+- **Script:** `/home/frappe/backup-to-r2.sh` on 178.105.139.103
+- **Schedule:** Daily 2:00 AM UTC (cron)
+- **Retention:** 30 days
+- **Scope:** erp.opentech.sa only (training excluded)
 
+### SSL
+- Let's Encrypt via certbot (auto-renew daily via systemd timer)
+- Both `erp.opentech.sa` and `training.opentech.sa` covered
+
+### ZATCA Phase 2
+- Production CSID re-issued after server migration
+- Compliance checks: all 6 passed (Simplified + Standard)
+- Server scripts enabled: `server_script_enabled: true`
+
+---
+
+## Common Commands
+
+### On 178.105.139.103 (Admin Server)
 ```bash
-# All bench commands (run as frappe user — must cd first)
-su - frappe -c "cd /home/frappe/frappe-bench && bench --site test2.opentra.opentech.sa <command>"
+# Check services
+supervisorctl status
 
-# Direct SQL (DB name from sites/test2.opentra.opentech.sa/site_config.json)
-mysql -u root _test2_opentra_c1ca6d72 -e "SELECT ..."
+# Backup manually
+bash /home/frappe/backup-to-r2.sh
 
-# demo site
-su - frappe -c "cd /home/frappe/frappe-bench && bench --site demo.opentra.opentech.sa <command>"
+# Clear cache
+su - frappe -c "cd /home/frappe/frappe-bench && bench --site erp.opentech.sa clear-cache"
+
+# New site (future)
+su - frappe -c "cd /home/frappe/frappe-bench && bench new-site {site} --mariadb-root-password OpenTech@2026 --admin-password {pass} --no-mariadb-socket"
 ```
 
-### Testing
+### On 77.42.75.231 (Opentra Server)
 ```bash
-su - frappe -c "cd /home/frappe/frappe-bench && bench --site test2.opentra.opentech.sa \
-  execute opentra_retention.test_retention_full.execute"
+# Install apps on new site
+bench --site {site} install-app erpnext
+bench --site {site} install-app ksa_compliance      # local, no GitHub needed
+bench --site {site} install-app opentra_retention   # local, no GitHub needed
 
-su - frappe -c "cd /home/frappe/frappe-bench && bench --site test2.opentra.opentech.sa \
-  execute opentra_retention.test_retention_payment.execute"
+# Update ksa_compliance (manual, from Opentra repo only)
+cd /home/frappe/frappe-bench/apps/ksa_compliance
+git pull upstream master
+bench --site {site} migrate
 ```
 
-### Linting
-```bash
-# Python (ruff)
-ruff check .
-ruff format .
+---
 
-# JavaScript
-npx eslint opentra_retention/public/js/
+## Architecture Summary
 
-# Run all pre-commit hooks
-pre-commit run --all-files
+```
+System 1: erp.opentech.sa (178.105.139.103)
+  → Admin Portal: ERPNext Desk + opentra_admin (planned)
+  → Manages: clients, subscriptions, billing, backups
+
+System 2: opentra.opentech.sa (planned)
+  → Customer Portal: Next.js
+  → Portal A: Public (landing, pricing, signup)
+  → Portal B: Private (dashboard, billing, self-service)
+
+System 3: 77.42.75.231
+  → Customer sites: {client}.opentra.opentech.sa
+  → Apps: frappe + erpnext + ksa_compliance + opentra_*
+  → Provisioning API: Flask :5000 (planned)
 ```
 
-### Installation / Deployment
-```bash
-bench get-app opentra_retention <repo-url>
-bench --site <site> install-app opentra_retention
-bench restart   # ← CRITICAL: hooks (on_submit etc.) are NOT active until workers restart
+See `docs/ARCHITECTURE.md` for full details.
 
-# Re-run post-install setup (custom fields, accounts, print format, workspaces)
-bench --site <site> execute opentra_retention.setup.install.after_install
+---
 
-# Rebuild JS assets after JS changes
-bench --site <site> build --app opentra_retention
+## Roadmap Status
 
-# Clear cache after Python/config changes
-bench --site <site> clear-cache
-```
-
-> **⚠️ `bench restart` is mandatory after every `bench install-app`.**
-> Workers load `hooks.py` at startup. Skipping the restart means `on_submit`, `on_cancel`, and
-> `validate` hooks silently don't fire — documents will be created in an inconsistent state
-> (missing JVs, missing GL entries) with no error logged.
-
-### Per-company setup (automated)
-
-`after_install` (and `after_migrate`) now auto-creates the retention accounts for all existing
-companies and wires them into Company settings. New companies get the same treatment via the
-`Company.after_insert` hook.
-
-**What `create_retention_accounts()` does per company:**
-1. Finds the Accounts Receivable parent group (parent of the Debtors account)
-2. Creates `1311 - Retention Receivable` (account type: Receivable Retention) — skips if exists
-3. Creates `1312 - Retention Released Receivable` (account type: Receivable) — skips if exists
-4. Sets both as defaults in Company → Retention Settings — skips if already set
-
-**Nothing needs to be done manually.** If the accounts already exist (manually created before this
-version), install.py detects them and skips creation but still wires the defaults if unset.
-
-> **Fallback (edge case):** If install runs before the company's Chart of Accounts exists (e.g.
-> on a brand-new ERPNext installation where Company is created before `bench install-app`),
-> `create_retention_accounts()` will print a warning and skip. Run `after_install` again after
-> the CoA is set up:
-> ```bash
-> bench --site <site> execute opentra_retention.setup.install.after_install
-> ```
-
-## Architecture
-
-### Retention Lifecycle
-
-Four GL events across two intermediate accounts (1311 and 1312):
-
-1. **Sales Invoice submit** → `custom/sales_invoice.py:on_submit()` creates a **Retention JV**:
-   `DR 1311 Retention Receivable | CR AR (Debtors)` — withholds retention from AR outstanding.
-2. **Retention Release submit** → `retention_release.py:on_submit()` creates a **Release JV**:
-   `DR 1312 Retention Released | CR 1311` — moves the amount to "approved for payment."
-3. **Create Payment Entry** → `api.make_retention_payment_entry()` auto-creates a **Transfer JV**:
-   `DR AR [ref: SI] | CR 1312` — restores SI outstanding so the PE can reference it.
-   Then creates a Draft Payment Entry (`paid_from = AR`, `paid_to = Bank`).
-4. **Payment Entry submit** → `custom/payment_entry.py:on_submit()` marks the Retention Release
-   as "Paid". If PE is cancelled, Transfer JV is also cancelled and status reverts to "Submitted."
-
-Status flow: `Draft → Submitted → Paid`  (cancellation branch: `→ Cancelled`)
-
-### Key Files
-
-| File | Role |
-|------|------|
-| `opentra_retention/api.py` | All `@frappe.whitelist()` RPC endpoints for portal and internal use |
-| `opentra_retention/custom/sales_invoice.py` | Hook handlers for Sales Invoice events |
-| `opentra_retention/custom/payment_entry.py` | Hook handlers for Payment Entry events |
-| `opentra_retention/dashboard/sales_invoice.py` | Adds Retention Release to Sales Invoice dashboard connections panel |
-| `opentra_retention/opentra_retention/doctype/retention_release/retention_release.py` | Core Retention Release DocType: validation, balance computation, JV creation/cancellation |
-| `opentra_retention/opentra_retention/report/retention_status_report/retention_status_report.py` | Script Report: GL-based retention status per invoice (held/released/paid/outstanding) |
-| `opentra_retention/setup/install.py` | Post-install: creates custom fields, account type, print format, workspaces, portal role |
-| `opentra_retention/public/js/retention_release.js` | Client-side form logic: live balance, "Create Payment Entry" and "Print" buttons |
-| `opentra_retention/public/js/sales_invoice.js` | Retention % auto-calc, dashboard indicator, "Create/View" buttons on Sales Invoice |
-
-### Frappe Hooks (`hooks.py`)
-
-| Hook | Value | Effect |
-|------|-------|--------|
-| `after_install` / `after_migrate` | `setup/install.py:after_install` | Creates fields, account type, accounts, print format, workspaces, role |
-| `fixtures` | `Report: Retention Status Report` | Bundles report so it is created on install |
-| `doctype_js` | Retention Release, Sales Invoice | Loads public JS for both DocTypes |
-| `override_doctype_dashboards` | `dashboard/sales_invoice.py:get_data` | Adds Retention Release panel to SI connections panel |
-| `report_permission_map` | Retention Status Report | Grants report access to 3 roles |
-| `doc_events → Sales Invoice` | `validate`, `on_submit`, `on_cancel` | Auto-calc retention; create/cancel Retention JV |
-| `doc_events → Payment Entry` | `on_submit`, `on_cancel` | Mark/revert Retention Release as Paid |
-| `doc_events → Company` | `after_insert` | Auto-creates 1311 + 1312 accounts for every new company |
-
-### Portal Multi-tenancy
-
-System users have unrestricted access. Portal users authenticate through `Customer Portal User` → `Customer Portal Tenant`, which carries `customer`, `company`, `enable_retention`, and `portal_role`. Every whitelisted API call that serves portal data calls `_get_portal_customer()` first, which raises if the user is inactive or lacks a valid tenant.
-
-### Custom Fields (added by install.py)
-
-Created automatically on install/migrate via `create_custom_fields()`:
-
-| DocType | Fieldname | Purpose |
-|---------|-----------|---------|
-| Company | `default_retention_account` | 1311 account (Receivable Retention) |
-| Company | `default_retention_released_account` | 1312 account (approved but unpaid) |
-| Sales Invoice | `custom_retention_percentage` | Select: 10%, 5%, or empty (manual) |
-| Sales Invoice | `custom_retention_amount` | Auto-calculated or manually entered |
-| Sales Invoice | `custom_net_after_retention` | Grand Total − Retention (read-only) |
-| Sales Invoice | `custom_retention_jv` | Link to auto-created Retention JV |
-| Payment Entry | `custom_retention_release` | Link to Retention Release (read-only) |
-| User | `custom_customer` | Customer link for portal API access |
-
-## Python Style
-
-- Line length: 110 (ruff enforced)
-- Target: Python 3.10+
-- Import sort style: as configured in `pyproject.toml` (ruff isort)
-- Handler functions use the signature `def on_submit(doc, method)` (not class methods)
-- API helpers use `_success(data)` / `_error(msg, code)` patterns from `api.py`
-- Errors are logged with `frappe.log_error()` before raising or returning error responses
-
-## JavaScript Style
-
-- ESLint config at `.eslintrc` with Frappe globals (`frappe`, `cur_frm`, `Vue`, `erpnext`)
-- Frappe form events use `frappe.ui.form.on('DocType', { event: function(frm) {} })`
-- Prettier for formatting (see `.pre-commit-config.yaml`)
+- [x] Phase 0: Foundation (May 2026) ✅
+  - [x] Server migration Hostinger → Hetzner
+  - [x] SSL + ZATCA Phase 2
+  - [x] Backup → Cloudflare R2
+  - [x] opentra_retention v0.1.0 complete
+  - [x] opentra-ksa-compliance private repo
+- [ ] Phase 1: Admin Portal MVP
+- [ ] Phase 2: Customer Portal Public
+- [ ] Phase 3: Customer Portal Private
+- [ ] Phase 4: Automation & Scale
